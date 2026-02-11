@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+// src/components/DirectionsSidebar/DirectionsSidebar.jsx
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import styles from "./DirectionsSidebar.module.css";
 import { createStartIcon, createEndIcon } from "../../maps/markerIcons";
 import { placeToLatLng } from "../../maps/directionsUtils";
+import { usePlacePickerChange } from "../../hooks/usePlacePickerChange";
 
 export default function DirectionsSidebar({
   canRenderMap,
@@ -61,33 +63,26 @@ export default function DirectionsSidebar({
     });
   }, [canRenderMap, userLoc, originRef, destRef]);
 
-  useEffect(() => {
-    if (!canRenderMap) return;
-
-    const originEl = originRef.current;
-    const destEl = destRef.current;
-    if (!originEl || !destEl) return;
-
-    const onOrigin = (e) => {
+  const handleOriginPlaceChange = useCallback(
+    (e, originEl) => {
       const place = e?.target?.value ?? originEl.value;
       const ll = placeToLatLng(place);
       if (ll) setOrigin(ll);
-    };
+    },
+    [setOrigin]
+  );
 
-    const onDest = (e) => {
+  const handleDestPlaceChange = useCallback(
+    (e, destEl) => {
       const place = e?.target?.value ?? destEl.value;
       const ll = placeToLatLng(place);
       if (ll) setDestination(ll);
-    };
+    },
+    [setDestination]
+  );
 
-    originEl.addEventListener("gmpx-placechange", onOrigin);
-    destEl.addEventListener("gmpx-placechange", onDest);
-
-    return () => {
-      originEl.removeEventListener("gmpx-placechange", onOrigin);
-      destEl.removeEventListener("gmpx-placechange", onDest);
-    };
-  }, [canRenderMap, setOrigin, setDestination, originRef, destRef]);
+  usePlacePickerChange(originRef, canRenderMap, handleOriginPlaceChange);
+  usePlacePickerChange(destRef, canRenderMap, handleDestPlaceChange);
 
   const showRoutes = routeOptions?.length > 1 && typeof onSelectRoute === "function";
 

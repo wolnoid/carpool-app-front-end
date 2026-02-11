@@ -96,15 +96,19 @@ export default function Landing() {
     fallbackCenter: FALLBACK_CENTER,
   });
 
+  function prefillFromUserLocationIfNeeded() {
+    const ul = userLocRef.current;
+    if (ul && !fromPrefill.userPickedRef.current) {
+      fromPrefill.prefillIfEmpty(ul);
+    }
+  }
+
   async function onBuildRoute() {
     const d = destinationRef.current;
     if (!d) return;
 
     // If From UI is blank and user didn’t pick a From, prefill with geolocation (when available)
-    const ul = userLocRef.current;
-    if (ul && !fromPrefill.userPickedRef.current) {
-      fromPrefill.prefillIfEmpty(ul);
-    }
+    prefillFromUserLocationIfNeeded();
 
     await routing.buildRoute({ alternatives: true });
   }
@@ -117,10 +121,7 @@ export default function Landing() {
     setCtxMenu(null);
 
     // If From is still blank/unpicked, prefill From with geolocation (only in this scenario)
-    const ul = userLocRef.current;
-    if (ul && !fromPrefill.userPickedRef.current) {
-      fromPrefill.prefillIfEmpty(ul);
-    }
+    prefillFromUserLocationIfNeeded();
 
     setDestination(here);
     populatePlacePickerFromLatLng(destPickerRef.current, here);

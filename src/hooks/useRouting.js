@@ -407,12 +407,7 @@ export function useRouting({
         const next = viaPointsRef.current.filter((_, i) => i !== idx);
         viaPointsRef.current = next;
 
-        clearAlternativesState();
-        await buildRoute({
-          viaPointsOverride: next,
-          alternatives: false,
-          fitToRoutes: true,
-        });
+        await rebuildWithoutAlternatives(next);
       });
 
       marker.addListener("dragend", async (e) => {
@@ -423,15 +418,19 @@ export function useRouting({
         next[idx] = ll;
         viaPointsRef.current = next;
 
-        clearAlternativesState();
-        await buildRoute({
-          viaPointsOverride: next,
-          alternatives: false,
-          fitToRoutes: true,
-        });
+        await rebuildWithoutAlternatives(next);
       });
 
       return marker;
+    });
+  }
+
+  async function rebuildWithoutAlternatives(viaPointsOverride) {
+    clearAlternativesState();
+    await buildRoute({
+      viaPointsOverride,
+      alternatives: false,
+      fitToRoutes: true,
     });
   }
 

@@ -1,3 +1,5 @@
+// src/maps/directionsUtils.js
+
 export function toLatLngLiteral(ll) {
   if (!ll) return null;
   if (typeof ll.lat === "function") return { lat: ll.lat(), lng: ll.lng() };

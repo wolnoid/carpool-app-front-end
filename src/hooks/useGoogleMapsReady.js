@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { MAPS_LOADER_SELECTOR } from "../maps/mapsLoaderConfig";
 
 export function useGoogleMapsReady(timeoutMs = 15000) {
   const isReadyNow = () =>
@@ -34,9 +35,7 @@ export function useGoogleMapsReady(timeoutMs = 15000) {
       if (performance.now() - start > timeoutMs) {
         clearInterval(timer);
 
-        const loader = document.querySelector(
-          'gmpx-api-loader[data-app-loader="true"]'
-        );
+        const loader = document.querySelector(MAPS_LOADER_SELECTOR);
         const keyAttr = loader?.getAttribute("key");
 
         const msg = !loader
