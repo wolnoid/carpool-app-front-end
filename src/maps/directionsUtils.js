@@ -7,6 +7,10 @@ export function toLatLngLiteral(ll) {
   return null;
 }
 
+export function placeToLatLng(place) {
+  return toLatLngLiteral(place?.location);
+}
+
 export function extractViaPointsFromRoute(route) {
   const legs = route?.legs ?? [];
   const pts = [];

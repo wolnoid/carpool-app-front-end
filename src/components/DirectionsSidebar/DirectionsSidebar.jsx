@@ -2,12 +2,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import styles from "./DirectionsSidebar.module.css";
 import { createStartIcon, createEndIcon } from "../../maps/markerIcons";
-
-function placeToLatLng(place) {
-  const loc = place?.location;
-  if (!loc) return null;
-  return typeof loc.lat === "function" ? { lat: loc.lat(), lng: loc.lng() } : loc;
-}
+import { placeToLatLng } from "../../maps/directionsUtils";
 
 export default function DirectionsSidebar({
   canRenderMap,
