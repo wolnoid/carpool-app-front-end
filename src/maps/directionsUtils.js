@@ -1,11 +1,5 @@
-// src/maps/directionsUtils.js
-
-export function toLatLngLiteral(ll) {
-  if (!ll) return null;
-  if (typeof ll.lat === "function") return { lat: ll.lat(), lng: ll.lng() };
-  if (Number.isFinite(ll.lat) && Number.isFinite(ll.lng)) return ll;
-  return null;
-}
+import { toLatLngLiteral } from "./googleUtils";
+export { toLatLngLiteral };
 
 export function placeToLatLng(place) {
   return toLatLngLiteral(place?.location);
@@ -33,16 +27,6 @@ export function extractViaPointsFromRoute(route) {
     out.push(p);
   }
   return out;
-}
-
-export function disposeMarker(m) {
-  if (!m) return;
-  try {
-    window.google.maps.event.clearInstanceListeners(m);
-  } catch {
-    // ignore
-  }
-  if (typeof m.setMap === "function") m.setMap(null);
 }
 
 function formatDuration(totalSeconds) {

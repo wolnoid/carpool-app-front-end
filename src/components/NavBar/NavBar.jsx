@@ -1,6 +1,7 @@
 import { useContext } from 'react';
 import { Link } from 'react-router';
 import { UserContext } from '../../contexts/UserContext';
+import { clearToken } from "../../services/tokenService";
 import styles from './NavBar.module.css';
 import Logo from '../../assets/images/logo.svg';
 
@@ -8,7 +9,7 @@ const NavBar = () => {
   const { user, setUser } = useContext(UserContext);
 
   const handleSignOut = () => {
-    localStorage.removeItem('token');
+    clearToken();
     setUser(null);
   };
 

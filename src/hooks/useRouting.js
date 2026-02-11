@@ -1,9 +1,7 @@
-// src/hooks/useRouting.js
 import { useEffect, useRef, useState } from "react";
 import {
   extractViaPointsFromRoute,
   summarizeDirectionsRoutes,
-  toLatLngLiteral,
 } from "../maps/directionsUtils";
 import {
   createDetourIcon,
@@ -11,53 +9,11 @@ import {
   createStartIcon,
 } from "../maps/markerIcons";
 import { populatePlacePickerFromLatLng } from "../maps/placePicker";
-
-// Robustly dispose either google.maps.Marker or AdvancedMarkerElement
-function disposeAnyMarker(m) {
-  if (!m) return;
-
-  try {
-    if (window.google?.maps?.event?.clearInstanceListeners) {
-      window.google.maps.event.clearInstanceListeners(m);
-    }
-  } catch {
-    // ignore
-  }
-
-  // Marker
-  if (typeof m.setMap === "function") {
-    try {
-      m.setMap(null);
-    } catch {
-      // ignore
-    }
-    return;
-  }
-
-  // AdvancedMarkerElement
-  if ("map" in m) {
-    try {
-      m.map = null;
-    } catch {
-      // ignore
-    }
-  }
-}
-
-function latLngToNums(p) {
-  if (!p) return null;
-  // google.maps.LatLng
-  if (typeof p.lat === "function" && typeof p.lng === "function") {
-    const lat = p.lat();
-    const lng = p.lng();
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-    return { lat, lng };
-  }
-  // literal
-  const { lat, lng } = p;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return { lat, lng };
-}
+import {
+  disposeAnyMarker,
+  latLngToNums,
+  toLatLngLiteral,
+} from "../maps/googleUtils";
 
 function haversineMeters(a, b) {
   const A = latLngToNums(a);
@@ -462,7 +418,7 @@ export function useRouting({
     const dr = rendererRef.current;
     if (!ds || !dr || !map) return;
 
-    const ul = userLocRef.current;
+    const ul = userLocRef?.current;
     const origin = originOverride ?? originRef.current ?? ul ?? fallbackCenter;
     const destination = destinationOverride ?? destinationRef.current;
     if (!destination) return;
@@ -472,7 +428,7 @@ export function useRouting({
     const req = {
       origin,
       destination,
-      travelMode: travelModeRef.current,
+      travelMode: travelModeRef.current ?? "TRANSIT",
       provideRouteAlternatives: Boolean(alternatives),
     };
 

@@ -1,9 +1,9 @@
-// src/components/DirectionsSidebar/DirectionsSidebar.jsx
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import styles from "./DirectionsSidebar.module.css";
-import { createStartIcon, createEndIcon } from "../../maps/markerIcons";
+import { getStartIconUrl, getEndIconUrl } from "../../maps/markerIconSvgs";
 import { placeToLatLng } from "../../maps/directionsUtils";
 import { usePlacePickerChange } from "../../hooks/usePlacePickerChange";
+import { isTransitOn, isBikeOn, isSkateOn, nextCombo } from "../../routing/routeCombos";
 
 export default function DirectionsSidebar({
   canRenderMap,
@@ -11,10 +11,16 @@ export default function DirectionsSidebar({
   setOrigin,
   destination,
   setDestination,
-  travelMode,
-  setTravelMode,
+
+  routeCombo,
+  setRouteCombo,
+
+  hillWeight,        // 0..1
+  setHillWeight,
+
   onBuildRoute,
   onClearRoute,
+
   directionsPanelRef,
 
   originPickerRef,
@@ -23,6 +29,10 @@ export default function DirectionsSidebar({
   routeOptions = [],
   selectedRouteIndex = 0,
   onSelectRoute,
+
+  // Optional: if your “smart routing” returns a segment summary, show it here.
+  selectedSegments = null,
+  showGooglePanel = true,
 }) {
   const internalOriginRef = useRef(null);
   const internalDestRef = useRef(null);
@@ -30,24 +40,8 @@ export default function DirectionsSidebar({
   const originRef = originPickerRef ?? internalOriginRef;
   const destRef = destPickerRef ?? internalDestRef;
 
-  // Sidebar icons that match map marker SVGs
-  const startIconUrl = useMemo(() => {
-    if (!canRenderMap) return null;
-    try {
-      return createStartIcon().url;
-    } catch {
-      return null;
-    }
-  }, [canRenderMap]);
-
-  const endIconUrl = useMemo(() => {
-    if (!canRenderMap) return null;
-    try {
-      return createEndIcon().url;
-    } catch {
-      return null;
-    }
-  }, [canRenderMap]);
+  const startIconUrl = getStartIconUrl();
+  const endIconUrl = getEndIconUrl();
 
   useEffect(() => {
     if (!canRenderMap || !userLoc) return;
@@ -86,20 +80,17 @@ export default function DirectionsSidebar({
 
   const showRoutes = routeOptions?.length > 1 && typeof onSelectRoute === "function";
 
+  const transitOn = isTransitOn(routeCombo);
+  const bikeOn = isBikeOn(routeCombo);
+  const skateOn = isSkateOn(routeCombo);
+
   return (
     <aside className={styles.sidebar}>
       <div className={styles.sidebarHeader}>Directions</div>
 
       <div className={styles.field}>
         <div className={styles.labelRow}>
-          {startIconUrl && (
-            <img
-              className={styles.markerIconStart}
-              src={startIconUrl}
-              alt=""
-              aria-hidden="true"
-            />
-          )}
+          <img className={styles.markerIconStart} src={startIconUrl} alt="" aria-hidden="true" />
           <div className={styles.label}>From</div>
         </div>
 
@@ -112,14 +103,7 @@ export default function DirectionsSidebar({
 
       <div className={styles.field}>
         <div className={styles.labelRow}>
-          {endIconUrl && (
-            <img
-              className={styles.markerIconEnd}
-              src={endIconUrl}
-              alt=""
-              aria-hidden="true"
-            />
-          )}
+          <img className={styles.markerIconEnd} src={endIconUrl} alt="" aria-hidden="true" />
           <div className={styles.label}>To</div>
         </div>
 
@@ -128,16 +112,45 @@ export default function DirectionsSidebar({
 
       <div className={styles.field}>
         <div className={styles.label}>Mode</div>
-        <select
-          className={styles.select}
-          value={travelMode}
-          onChange={(e) => setTravelMode(e.target.value)}
-        >
-          <option value="DRIVING">Driving</option>
-          <option value="WALKING">Walking</option>
-          <option value="BICYCLING">Biking</option>
-          <option value="TRANSIT">Transit</option>
-        </select>
+        <div className={styles.modeRow}>
+          <button
+            type="button"
+            className={`${styles.modeBtn} ${transitOn ? styles.modeBtnOn : ""}`}
+            onClick={() => setRouteCombo((c) => nextCombo(c, "TRANSIT"))}
+          >
+            Transit
+          </button>
+          <button
+            type="button"
+            className={`${styles.modeBtn} ${bikeOn ? styles.modeBtnOn : ""}`}
+            onClick={() => setRouteCombo((c) => nextCombo(c, "BIKE"))}
+          >
+            Bike
+          </button>
+          <button
+            type="button"
+            className={`${styles.modeBtn} ${skateOn ? styles.modeBtnOn : ""}`}
+            onClick={() => setRouteCombo((c) => nextCombo(c, "SKATE"))}
+          >
+            Skateboard
+          </button>
+        </div>
+      </div>
+
+      <div className={styles.field}>
+        <div className={styles.labelRow}>
+          <div className={styles.label}>Avoid hills</div>
+          <div className={styles.hillValue}>{Math.round(hillWeight * 100)}</div>
+        </div>
+        <input
+          className={styles.slider}
+          type="range"
+          min="0"
+          max="100"
+          value={Math.round(hillWeight * 100)}
+          onChange={(e) => setHillWeight(Number(e.target.value) / 100)}
+        />
+        <div className={styles.hint}>0 = fastest, 100 = strongly prefers flatter cycling legs.</div>
       </div>
 
       {showRoutes && (
@@ -165,19 +178,26 @@ export default function DirectionsSidebar({
       )}
 
       <div className={styles.actions}>
-        <button
-          className={styles.primaryBtn}
-          onClick={onBuildRoute}
-          disabled={!destination}
-        >
+        <button className={styles.primaryBtn} onClick={onBuildRoute} disabled={!destination}>
           Get directions
         </button>
-        <button className={styles.secondaryBtn} onClick={onClearRoute}>
+        <button className={styles.secondaryBtn} onClick={onClearRoute} type="button">
           Clear
         </button>
       </div>
 
-      <div ref={directionsPanelRef} className={styles.panel} />
+      {selectedSegments && (
+        <div className={styles.segments}>
+          <div className={styles.routesTitle}>Itinerary</div>
+          {selectedSegments.map((s, i) => (
+            <div key={i} className={styles.segmentRow}>
+              <strong>{s.mode}</strong> · {s.durationText}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showGooglePanel && <div ref={directionsPanelRef} className={styles.panel} />}
     </aside>
   );
 }

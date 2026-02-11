@@ -1,5 +1,5 @@
-// src/hooks/useInnerMap.js
 import { useEffect, useState } from "react";
+import { rafPoll } from "../utils/rafPoll";
 
 export function useInnerMap(mapRef, enabled, maxFrames = 180) {
   const [map, setMap] = useState(null);
@@ -7,23 +7,13 @@ export function useInnerMap(mapRef, enabled, maxFrames = 180) {
   useEffect(() => {
     if (!enabled) return;
 
-    let raf = 0;
-    let frames = 0;
-
-    const tick = () => {
-      const m = mapRef.current?.innerMap ?? null;
-      if (m) {
-        setMap(m);
-        return;
-      }
-      if (++frames < maxFrames) raf = requestAnimationFrame(tick);
-    };
-
-    tick();
-    return () => cancelAnimationFrame(raf);
+    return rafPoll(
+      () => mapRef.current?.innerMap ?? null,
+      (m) => setMap(m),
+      { maxFrames }
+    );
   }, [enabled, mapRef, maxFrames]);
 
-  // If disabled, clear
   useEffect(() => {
     if (!enabled) setMap(null);
   }, [enabled]);

@@ -11,3 +11,16 @@ export function ensureMapsLoaderElement() {
 
   return el;
 }
+
+export function configureMapsLoader({
+  key,
+  version = "quarterly",
+  libraries = "places,geometry",
+} = {}) {
+  const el = ensureMapsLoaderElement();
+  if (key) el.setAttribute("key", key);
+  el.setAttribute("version", version);
+  // Needed soon for hills work (geometry decode) + place picker + places importLibrary
+  el.setAttribute("libraries", libraries);
+  return el;
+}

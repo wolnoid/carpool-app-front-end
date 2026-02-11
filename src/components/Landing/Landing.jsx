@@ -9,6 +9,7 @@ import { useInnerMap } from "../../hooks/useInnerMap";
 import { usePickerPrefill } from "../../hooks/usePickerPrefill";
 import { useMapContextMenu } from "../../hooks/useMapContextMenu";
 import { useRouting } from "../../hooks/useRouting";
+import { ROUTE_COMBO } from "../../routing/routeCombos";
 
 import { populatePlacePickerFromLatLng } from "../../maps/placePicker";
 
@@ -30,7 +31,8 @@ export default function Landing() {
   // State used by sidebar + to enable buttons; routing uses refs for latest values
   const [origin, setOrigin] = useState(null);
   const [destination, setDestination] = useState(null);
-  const [travelMode, setTravelMode] = useState("DRIVING");
+  const [routeCombo, setRouteCombo] = useState(ROUTE_COMBO.TRANSIT);
+  const [hillWeight, setHillWeight] = useState(0);
 
   // Default origin state to geolocation for routing (no UI fill on load)
   useEffect(() => {
@@ -40,13 +42,30 @@ export default function Landing() {
   // Refs for stable “latest value” access inside map listeners
   const originRef = useRef(origin);
   const destinationRef = useRef(destination);
-  const travelModeRef = useRef(travelMode);
   const userLocRef = useRef(userLoc);
-
+  const routeComboRef = useRef(routeCombo);
+  const hillWeightRef = useRef(hillWeight);
+  const travelModeRef = useRef("TRANSIT");
+  
   useEffect(() => void (originRef.current = origin), [origin]);
   useEffect(() => void (destinationRef.current = destination), [destination]);
-  useEffect(() => void (travelModeRef.current = travelMode), [travelMode]);
   useEffect(() => void (userLocRef.current = userLoc), [userLoc]);
+  useEffect(() => void (routeComboRef.current = routeCombo), [routeCombo]);
+  useEffect(() => void (hillWeightRef.current = hillWeight), [hillWeight]);
+
+  useEffect(() => {
+  switch (routeCombo) {
+    case ROUTE_COMBO.BIKE:
+      travelModeRef.current = "BICYCLING";
+      break;
+    case ROUTE_COMBO.SKATE:
+      travelModeRef.current = "WALKING"; // temporary until skateboard timing override exists
+      break;
+    default:
+      travelModeRef.current = "TRANSIT";
+      break;
+  }
+}, [routeCombo]);
 
   // Set initial center on the web component itself
   useEffect(() => {
@@ -173,8 +192,10 @@ export default function Landing() {
             setOrigin={setOrigin}
             destination={destination}
             setDestination={setDestination}
-            travelMode={travelMode}
-            setTravelMode={setTravelMode}
+            routeCombo={routeCombo}
+            setRouteCombo={setRouteCombo}
+            hillWeight={hillWeight}
+            setHillWeight={setHillWeight}
             onBuildRoute={onBuildRoute}
             onClearRoute={onClearRoute}
             directionsPanelRef={directionsPanelRef}
