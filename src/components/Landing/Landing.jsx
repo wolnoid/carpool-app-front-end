@@ -41,6 +41,17 @@ export default function Landing() {
   const [timeKind, setTimeKind] = useState("NOW");
   const [timeValue, setTimeValue] = useState(() => new Date());
 
+  // Keep the disabled "Leave now" timestamp fresh so the UI reflects actual now.
+  // This does NOT affect routing requests (we omit transitOptions for NOW);
+  // it only ensures the displayed datetime doesn't get stuck at initial page-load time.
+  useEffect(() => {
+    if (timeKind !== "NOW") return;
+    const tick = () => setTimeValue(new Date());
+    tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(id);
+  }, [timeKind]);
+
   // Tracks last directions request signature so we can “drain” the button until inputs change.
   const [lastQueryKey, setLastQueryKey] = useState("");
 
@@ -176,6 +187,9 @@ export default function Landing() {
     const d = destination;
     if (!d) return;
 
+    // If the user is in "Leave now", refresh the displayed time at the moment they request directions.
+    if (timeKind === "NOW") setTimeValue(new Date());
+
     prefillFromUserLocationIfNeeded();
 
     // Drain immediately; re-arms once inputs change
@@ -190,6 +204,8 @@ export default function Landing() {
 
   async function directionsToHere(here) {
     setCtxMenu(null);
+
+    if (timeKind === "NOW") setTimeValue(new Date());
 
     prefillFromUserLocationIfNeeded();
 
@@ -206,6 +222,8 @@ export default function Landing() {
 
   async function directionsFromHere(here) {
     setCtxMenu(null);
+
+    if (timeKind === "NOW") setTimeValue(new Date());
 
     fromPrefill.markPicked();
     setOrigin(here);

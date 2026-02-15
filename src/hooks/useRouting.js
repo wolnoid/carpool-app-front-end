@@ -103,6 +103,11 @@ export function useRouting({
   const microShadowPolylinesRef = useRef({ first: null, last: null });
   // Visual polylines for draggable first/last micro-legs (renderer kept mostly invisible for dragging)
   const microMainPolylinesRef = useRef({ first: null, last: null });
+  // Guard against a Maps JS edge-case where a draggable DirectionsRenderer can intermittently
+  // hijack drag gestures (starting a detour drag even when the user drags nowhere near the route).
+  // We temporarily disable micro-leg renderer dragging for gestures that start far from the
+  // current micro-leg geometry so map panning behaves normally.
+  const microDragGuardRef = useRef({ disabled: false, restoreTimer: null });
   const microProgrammaticRef = useRef({ first: false, last: false });
   const microSegIndexRef = useRef({ first: -1, last: -1 });
   const microViaPointsRef = useRef({ first: [], last: [] });
@@ -135,9 +140,339 @@ export function useRouting({
   // True when there is an active route on-map (prevents late directions_changed from re-drawing after Clear)
   const hasActiveRouteRef = useRef(false);
 
+  // Base map bike-path overlay (Google BicyclingLayer).
+  // We manage this explicitly because Google can toggle it off when we rebuild/re-set directions
+  // (route selection, detours, micro-leg replans, etc.).
+  const bikeLayerRef = useRef(null);
+  const bikeLayerShownRef = useRef(false);
+  const bikeLayerSessionRef = useRef(false);
+  const bikeLayerLoadPromiseRef = useRef(null);
+  const bikeKeepAliveRef = useRef({ idle: null, type: null });
+
+  function wantsBikeLayerForCombo() {
+    const combo = routeComboRef?.current ?? null;
+    return combo === ROUTE_COMBO.TRANSIT_BIKE || combo === ROUTE_COMBO.TRANSIT_SKATE;
+  }
+
+  function ensureBikeLayer() {
+    if (bikeLayerRef.current) return bikeLayerRef.current;
+    const Ctor = window.google?.maps?.BicyclingLayer;
+    if (!Ctor) return null;
+    bikeLayerRef.current = new Ctor();
+    return bikeLayerRef.current;
+  }
+
+  function setBikeLayerVisible(visible, { force = false } = {}) {
+    const layer = ensureBikeLayer();
+    if (!layer) {
+      // Best-effort: some builds do not define BicyclingLayer until the maps library is imported.
+      if (visible && !bikeLayerLoadPromiseRef.current) {
+        const importer = window.google?.maps?.importLibrary;
+        if (importer) {
+          bikeLayerLoadPromiseRef.current = importer('maps')
+            .catch(() => {})
+            .then(() => {
+              bikeLayerLoadPromiseRef.current = null;
+              try {
+                syncBikeLayer({ force: true });
+              } catch {
+                // ignore
+              }
+            });
+        }
+      }
+      return;
+    }
+
+    const next = Boolean(visible && enabled && map);
+    if (!force && bikeLayerShownRef.current === next) return;
+    bikeLayerShownRef.current = next;
+    try {
+      layer.setMap(next ? map : null);
+    } catch {
+      // ignore
+    }
+  }
+
+  function syncBikeLayer({ force = false } = {}) {
+    // Only show while a route session is active AND the current combo is a bike/skate combo.
+    setBikeLayerVisible(bikeLayerSessionRef.current && wantsBikeLayerForCombo(), { force });
+  }
+
+  function resyncBikeLayerSoon() {
+    if (!bikeLayerSessionRef.current) return;
+    const fn = () => {
+      try {
+        syncBikeLayer({ force: true });
+      } catch {
+        // ignore
+      }
+    };
+    try {
+      requestAnimationFrame(() => {
+        fn();
+        setTimeout(fn, 0);
+      });
+    } catch {
+      setTimeout(fn, 0);
+    }
+  }
+
+  useEffect(() => {
+    if (!enabled || !map) return;
+
+    // Keep-alive: DirectionsRenderer (and some internal map changes) can clear overlay layers
+    // while switching routes. Re-assert the bike layer after the map settles.
+    try {
+      bikeKeepAliveRef.current.idle?.remove?.();
+    } catch {
+      // ignore
+    }
+    try {
+      bikeKeepAliveRef.current.type?.remove?.();
+    } catch {
+      // ignore
+    }
+
+    bikeKeepAliveRef.current.idle = map.addListener('idle', () => {
+      if (!bikeLayerSessionRef.current) return;
+      resyncBikeLayerSoon();
+    });
+    bikeKeepAliveRef.current.type = map.addListener('maptypeid_changed', () => {
+      if (!bikeLayerSessionRef.current) return;
+      resyncBikeLayerSoon();
+    });
+
+    syncBikeLayer({ force: true });
+
+    return () => {
+      try {
+        bikeKeepAliveRef.current.idle?.remove?.();
+      } catch {
+        // ignore
+      }
+      try {
+        bikeKeepAliveRef.current.type?.remove?.();
+      } catch {
+        // ignore
+      }
+      bikeKeepAliveRef.current.idle = null;
+      bikeKeepAliveRef.current.type = null;
+
+      // Detach bike layer from the old map instance.
+      try {
+        bikeLayerRef.current?.setMap?.(null);
+      } catch {
+        // ignore
+      }
+      bikeLayerShownRef.current = false;
+    };
+  }, [enabled, map]);
+
 useEffect(() => {
     selectedIdxRef.current = selectedRouteIndex;
   }, [selectedRouteIndex]);
+
+  // Hybrid detour dragging glitch guard
+  // Some Maps JS builds can leave a draggable DirectionsRenderer (micro-leg) in a state where
+  // it starts a detour-drag no matter where the user begins dragging. We prevent that by
+  // disabling micro-leg dragging for gestures that begin far away from the micro-leg geometry.
+  useEffect(() => {
+    if (!enabled || !map) return;
+    const div = map.getDiv?.();
+    if (!div) return;
+
+    const GUARD_PX = 26; // how close (in screen px) the gesture must begin to allow route dragging
+
+    const clearRestoreTimer = () => {
+      const t = microDragGuardRef.current?.restoreTimer;
+      if (t) {
+        try {
+          clearTimeout(t);
+        } catch {
+          // ignore
+        }
+      }
+      if (microDragGuardRef.current) microDragGuardRef.current.restoreTimer = null;
+    };
+
+    const setMicroDraggable = (draggable) => {
+      const r1 = microFirstRendererRef.current;
+      const r2 = microLastRendererRef.current;
+      [r1, r2].forEach((r) => {
+        if (!r?.setOptions) return;
+        try {
+          r.setOptions({ draggable });
+        } catch {
+          // ignore
+        }
+      });
+    };
+
+    const clientToLatLng = (clientX, clientY) => {
+      const proj = map.getProjection?.();
+      const zoom = map.getZoom?.();
+      const center = map.getCenter?.();
+      if (!proj || !Number.isFinite(zoom) || !center) return null;
+
+      const rect = div.getBoundingClientRect?.();
+      if (!rect) return null;
+
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+      const scale = Math.pow(2, zoom);
+      let cWorld;
+      try {
+        cWorld = proj.fromLatLngToPoint(center);
+      } catch {
+        return null;
+      }
+      if (!cWorld) return null;
+
+      const cPx = { x: cWorld.x * scale, y: cWorld.y * scale };
+      const topLeftPx = { x: cPx.x - rect.width / 2, y: cPx.y - rect.height / 2 };
+      const worldPx = { x: topLeftPx.x + x, y: topLeftPx.y + y };
+      const worldPt = { x: worldPx.x / scale, y: worldPx.y / scale };
+
+      try {
+        return proj.fromPointToLatLng(worldPt);
+      } catch {
+        return null;
+      }
+    };
+
+    const pointSegDistSq = (p, a, b) => {
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const wx = p.x - a.x;
+      const wy = p.y - a.y;
+
+      const c1 = wx * vx + wy * vy;
+      if (c1 <= 0) return wx * wx + wy * wy;
+
+      const c2 = vx * vx + vy * vy;
+      if (c2 <= c1) {
+        const dx = p.x - b.x;
+        const dy = p.y - b.y;
+        return dx * dx + dy * dy;
+      }
+
+      const t = c1 / c2;
+      const px = a.x + t * vx;
+      const py = a.y + t * vy;
+      const dx = p.x - px;
+      const dy = p.y - py;
+      return dx * dx + dy * dy;
+    };
+
+    const minDistSqToPath = (p, pathPx) => {
+      if (!pathPx?.length) return Infinity;
+      if (pathPx.length === 1) {
+        const dx = p.x - pathPx[0].x;
+        const dy = p.y - pathPx[0].y;
+        return dx * dx + dy * dy;
+      }
+      let best = Infinity;
+      for (let i = 0; i < pathPx.length - 1; i++) {
+        const d = pointSegDistSq(p, pathPx[i], pathPx[i + 1]);
+        if (d < best) best = d;
+      }
+      return best;
+    };
+
+    const isNearMicroLegGeometry = (ll) => {
+      if (!ll) return false;
+      const proj = map.getProjection?.();
+      const zoom = map.getZoom?.();
+      if (!proj || !Number.isFinite(zoom)) return false;
+
+      const clickPx = toWorldPx(ll, proj, zoom);
+      if (!clickPx) return false;
+
+      const mm = microMainPolylinesRef.current ?? {};
+      const polys = [mm.first, mm.last].filter(Boolean);
+      if (!polys.length) return false;
+
+      const maxSq = GUARD_PX * GUARD_PX;
+
+      for (const poly of polys) {
+        let path;
+        try {
+          path = poly?.getPath?.()?.getArray?.() ?? [];
+        } catch {
+          path = [];
+        }
+        if (!path?.length) continue;
+        const pathPx = path
+          .map((pt) => toWorldPx(pt, proj, zoom))
+          .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.y));
+
+        const dSq = minDistSqToPath(clickPx, pathPx);
+        if (dSq <= maxSq) return true;
+      }
+      return false;
+    };
+
+    const restore = () => {
+      clearRestoreTimer();
+      if (!microDragGuardRef.current?.disabled) return;
+      microDragGuardRef.current.disabled = false;
+
+      // Only restore if we're still in a hybrid session with micro renderers present.
+      if (!hybridOptionsRef.current?.length) return;
+      if (!microFirstRendererRef.current && !microLastRendererRef.current) return;
+
+      setMicroDraggable(true);
+    };
+
+    const onPointerDownCapture = (e) => {
+      // Left mouse / primary pointer only.
+      if (e?.button != null && e.button !== 0) return;
+      if (!hybridOptionsRef.current?.length) return;
+      if (!microFirstRendererRef.current && !microLastRendererRef.current) return;
+
+      const ll = clientToLatLng(e.clientX, e.clientY);
+      const near = isNearMicroLegGeometry(ll);
+      if (near) return;
+
+      // Gesture starts far from micro legs: disable detour dragging so the map pans normally.
+      microDragGuardRef.current.disabled = true;
+      setMicroDraggable(false);
+
+      // Failsafe restore (in case pointerup is missed during a renderer reset).
+      clearRestoreTimer();
+      microDragGuardRef.current.restoreTimer = setTimeout(restore, 450);
+    };
+
+    const onPointerUp = () => restore();
+    const onPointerCancel = () => restore();
+    const onBlur = () => restore();
+
+    // Capture-phase so we run before Maps' internal handlers.
+    div.addEventListener("pointerdown", onPointerDownCapture, true);
+    window.addEventListener("pointerup", onPointerUp, true);
+    window.addEventListener("pointercancel", onPointerCancel, true);
+    window.addEventListener("blur", onBlur);
+
+    return () => {
+      try {
+        div.removeEventListener("pointerdown", onPointerDownCapture, true);
+      } catch {
+        // ignore
+      }
+      try {
+        window.removeEventListener("pointerup", onPointerUp, true);
+        window.removeEventListener("pointercancel", onPointerCancel, true);
+        window.removeEventListener("blur", onBlur);
+      } catch {
+        // ignore
+      }
+      restore();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, map]);
 
   function getIcons() {
     if (!iconsRef.current.detour) iconsRef.current.detour = createDetourIcon();
@@ -1156,6 +1491,15 @@ function addShadowPolyline({ path, strokeWeight = 8, zIndex = 0, isAlt = false, 
     return m + " min";
   }
 
+  function fmtTime(d) {
+    if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
+    try {
+      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    } catch {
+      return "" + d;
+    }
+  }
+
   function getFirstLastMicroSegIndices(option) {
     const segs = option?.segments ?? [];
     const microIdxs = [];
@@ -1544,6 +1888,10 @@ function addShadowPolyline({ path, strokeWeight = 8, zIndex = 0, isAlt = false, 
     const departTime = option?.departTime;
     const arriveTime = currentTime ?? option?.arriveTime;
 
+    const departTimeText = departTime ? fmtTime(departTime) : "";
+    const arriveTimeText = arriveTime ? fmtTime(arriveTime) : "";
+    const timeRangeText = departTimeText && arriveTimeText ? `${departTimeText}–${arriveTimeText}` : "";
+
     return {
       ...option,
       segments: out,
@@ -1552,6 +1900,9 @@ function addShadowPolyline({ path, strokeWeight = 8, zIndex = 0, isAlt = false, 
       arriveTime,
       durationText: fmtDurationSec(totalSec),
       distanceText: fmtDistanceMeters(totalDist),
+      departTimeText,
+      arriveTimeText,
+      timeRangeText,
     };
 
   }
@@ -2291,6 +2642,11 @@ function syncMicroMain(which, mode, route) {
     const isHybridCombo =
       combo === ROUTE_COMBO.TRANSIT_BIKE || combo === ROUTE_COMBO.TRANSIT_SKATE;
 
+
+    // Keep the base-map bicycling overlay stable during a route session.
+    bikeLayerSessionRef.current = isHybridCombo;
+    syncBikeLayer({ force: true });
+
     // Clear all existing overlays immediately so nothing from the previous search lingers.
     // Also hard-reset the main renderer to avoid lingering transit glyphs from the prior search.
     hardResetMainRenderer({ reattach: true, clearPanel: isHybridCombo });
@@ -2471,6 +2827,9 @@ function syncMicroMain(which, mode, route) {
         destinationRef.current
       );
 
+      // Some Google internals can clear layers while switching selections; re-assert bike paths.
+      resyncBikeLayerSoon();
+
       const combo = routeComboRef?.current ?? null;
       if (combo === ROUTE_COMBO.TRANSIT_SKATE) {
         // Best-effort elevation refinement for the newly selected option (timing only)
@@ -2503,6 +2862,7 @@ function syncMicroMain(which, mode, route) {
     syncMarkersFromRoute(full.routes[clamped]);
     drawPrimaryPolylinesFromRoute(full.routes[clamped]);
     drawAlternatePolylines(full, clamped);
+    resyncBikeLayerSoon();
   }
 
   // init service/renderer + keep markers in sync when user drags the primary route line
@@ -2536,6 +2896,12 @@ function syncMicroMain(which, mode, route) {
 
       changedListener = renderer.addListener("directions_changed", () => {
         if (!hasActiveRouteRef.current) return;
+
+        // IMPORTANT: keep the bike-path overlay sticky even during programmatic setDirections()
+        // (route selection, detours, hybrid micro-leg replans). Maps can clear overlay layers
+        // after setDirections and before the map goes idle.
+        resyncBikeLayerSoon();
+
         if (programmaticUpdateRef.current) return;
 
         const dir = renderer.getDirections?.();
@@ -2548,6 +2914,7 @@ function syncMicroMain(which, mode, route) {
 
         syncMarkersFromRoute(route);
         drawPrimaryPolylinesFromRoute(route);
+        resyncBikeLayerSoon();
       });
     })();
 
@@ -2904,6 +3271,10 @@ function syncHybridTransitGlyphs(option, seq) {
 function clearRoute() {
   const seq = bumpRequestSeq();
   hasActiveRouteRef.current = false;
+
+  // End the hybrid bike/skate session and detach the bicycling layer.
+  bikeLayerSessionRef.current = false;
+  syncBikeLayer({ force: true });
 
   // Prevent any pending directions_changed handler from re-drawing after clear.
   programmaticUpdateRef.current = true;

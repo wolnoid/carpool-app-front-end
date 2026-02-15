@@ -3,15 +3,28 @@ function toDataUrl(svg) {
 }
 
 export function getDetourIconUrl() {
+  // NOTE: Render the SVG at a higher resolution and scale it down via `scaledSize`.
+  // This keeps the circle + shadow crisp on high-DPI screens and looks closer to
+  // Google Maps' draggable route-point handles.
+  //
+  // IMPORTANT: We paint the *white disc* WITHOUT any filter applied, and generate
+  // the shadow from an invisible shape underneath. This prevents the filter chain
+  // from tinting the fill (which can read as “grey” after Google rasterizes the SVG).
   const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20">
-      <defs>
-        <filter id="ds" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="rgba(0,0,0,0.35)"/>
-        </filter>
-      </defs>
-      <circle cx="10" cy="10" r="6.5" fill="#ffffff" stroke="rgba(60,64,67,0.55)" stroke-width="2" filter="url(#ds)"/>
-    </svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <!-- detour-handle v3 -->
+  <defs>
+    <filter id="ds" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.4" flood-color="rgba(0,0,0,0.35)"/>
+    </filter>
+  </defs>
+
+  <!-- Shadow only (source shape fully transparent) -->
+  <circle cx="24" cy="24" r="15.5" fill="#FFFFFF" opacity="0" filter="url(#ds)" />
+
+  <!-- Disc: pure white with solid black outline -->
+  <circle cx="24" cy="24" r="15.5" fill="#FFFFFF" stroke="#000000" stroke-width="8" />
+</svg>
   `;
   return toDataUrl(svg);
 }

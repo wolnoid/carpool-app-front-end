@@ -376,7 +376,10 @@ export default function DirectionsSidebar({
                     setTimeValue(new Date());
                   }
 
-                  // If switching to NOW, the effect above will set timeValue to current time.
+                  // If switching to NOW, refresh the displayed time immediately.
+                  if (next === "NOW") {
+                    setTimeValue(new Date());
+                  }
                 }}
                 disabled={!transitOn}
               >
