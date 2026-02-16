@@ -8,51 +8,74 @@ export function fmtLatLng({ lat, lng }) {
 }
 
 // Best-effort: read visible text inside <gmpx-place-picker>
-export function getPickerText(pickerEl) {
-  if (!pickerEl) return "";
+function findPickerInput(pickerEl) {
+  if (!pickerEl) return null;
 
-  const lightInput = pickerEl.querySelector?.("input");
-  if (lightInput?.value) return lightInput.value;
+  // Some builds expose a direct pointer to the internal input.
+  const direct =
+    pickerEl.inputElement ||
+    pickerEl._inputElement ||
+    pickerEl.input ||
+    pickerEl._input ||
+    null;
 
-  const srInput = pickerEl.shadowRoot?.querySelector?.("input");
-  if (srInput?.value) return srInput.value;
+  if (direct && direct.tagName === "INPUT") return direct;
 
-  const nested =
-    pickerEl.shadowRoot?.querySelector?.(
-      "gmp-place-autocomplete, gmpx-place-autocomplete"
-    );
-  const nestedInput = nested?.shadowRoot?.querySelector?.("input");
-  return nestedInput?.value ?? "";
+  // Light DOM (unlikely, but cheap).
+  const light = pickerEl.querySelector?.("input");
+  if (light) return light;
+
+  // Open shadow DOM (most common).
+  const sr = pickerEl.shadowRoot || pickerEl.renderRoot || null;
+  if (sr) {
+    const srInput = sr.querySelector?.("input");
+    if (srInput) return srInput;
+
+    // Some versions nest an autocomplete component.
+    const nested = sr.querySelector?.("gmp-place-autocomplete, gmpx-place-autocomplete");
+    const nsr = nested?.shadowRoot || nested?.renderRoot || null;
+    const nestedInput = nsr?.querySelector?.("input");
+    if (nestedInput) return nestedInput;
+  }
+
+  return null;
 }
 
-// Set visible text WITHOUT triggering the autocomplete dropdown (best-effort)
+export function getPickerText(pickerEl) {
+  const input = findPickerInput(pickerEl);
+  return input?.value ?? "";
+}
+
+// Set visible text (best-effort). We *do* dispatch input/change so the component's
+// internal state stays in sync, otherwise it can re-render back to blank.
 export function forcePickerText(pickerEl, text) {
-  if (!pickerEl || !text) return;
+  if (!pickerEl) return;
+  if (text === undefined || text === null) return;
 
-  const setOnInput = (input) => {
-    input.value = text;
+  const input = findPickerInput(pickerEl);
+  if (!input) return;
 
-    // Close any open predictions UI (best-effort)
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Escape", bubbles: true })
-    );
+  const next = String(text);
+  input.value = next;
 
-    // Avoid dropdown focus/selection UI
-    input.blur?.();
-  };
+  // Keep internal state in sync.
+  try {
+    input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  } catch {
+    // ignore
+  }
 
-  const lightInput = pickerEl.querySelector?.("input");
-  if (lightInput) return setOnInput(lightInput);
-
-  const srInput = pickerEl.shadowRoot?.querySelector?.("input");
-  if (srInput) return setOnInput(srInput);
-
-  const nested =
-    pickerEl.shadowRoot?.querySelector?.(
-      "gmp-place-autocomplete, gmpx-place-autocomplete"
-    );
-  const nestedInput = nested?.shadowRoot?.querySelector?.("input");
-  if (nestedInput) return setOnInput(nestedInput);
+  // Best-effort: close suggestions if the input is currently focused.
+  try {
+    if (typeof document !== "undefined" && document.activeElement === input) {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true })
+      );
+    }
+  } catch {
+    // ignore
+  }
 }
 
 export async function reverseGeocodeLL(ll) {

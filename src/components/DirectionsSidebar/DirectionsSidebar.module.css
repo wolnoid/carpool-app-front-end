@@ -863,8 +863,9 @@
 }
 
 .detailsBtn {
-  border: 1px solid rgba(26, 115, 232, 0.25);
-  background: rgba(26, 115, 232, 0.10);
+  /* Neutral (matches WAIT itinerary bubble background) */
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  background: rgba(0, 0, 0, 0.06);
   color: rgba(0, 0, 0, 0.86);
   border-radius: 999px;
   padding: 6px 12px;
@@ -874,7 +875,7 @@
 }
 
 .detailsBtn:hover {
-  background: rgba(26, 115, 232, 0.16);
+  background: rgba(0, 0, 0, 0.10);
 }
 
 .detailsPane {

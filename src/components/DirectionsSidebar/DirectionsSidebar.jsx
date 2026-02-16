@@ -1142,6 +1142,18 @@ export default function DirectionsSidebar({
   const originRef = originPickerRef ?? internalOriginRef;
   const destRef = destPickerRef ?? internalDestRef;
 
+  // Track the latest resolved LatLngs so swap works even though <gmpx-place-picker>.value is readonly.
+  const originLLRef = useRef(null);
+  const destLLRef = useRef(null);
+
+  useEffect(() => {
+    destLLRef.current = destination ?? null;
+  }, [destination]);
+
+  useEffect(() => {
+    if (userLoc && !originLLRef.current) originLLRef.current = userLoc;
+  }, [userLoc]);
+
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return window.localStorage?.getItem(LS_KEY) === "1";
@@ -1238,16 +1250,41 @@ export default function DirectionsSidebar({
     (e, originEl) => {
       const place = e?.target?.value ?? originEl.value;
       const ll = placeToLatLng(place);
-      if (ll) setOrigin(ll);
+
+      if (ll) {
+        originLLRef.current = ll;
+        setOrigin(ll);
+        return;
+      }
+
+      // If the user cleared the field, fall back to user location (if available).
+      const txt = (getPickerText(originEl) || "").trim();
+      if (!txt) {
+        const fallback = userLoc ?? null;
+        originLLRef.current = fallback;
+        if (fallback) setOrigin(fallback);
+      }
     },
-    [setOrigin]
+    [setOrigin, userLoc]
   );
 
   const handleDestPlaceChange = useCallback(
     (e, destEl) => {
       const place = e?.target?.value ?? destEl.value;
       const ll = placeToLatLng(place);
-      if (ll) setDestination(ll);
+
+      if (ll) {
+        destLLRef.current = ll;
+        setDestination(ll);
+        return;
+      }
+
+      // If the user cleared the destination field, clear destination state too.
+      const txt = (getPickerText(destEl) || "").trim();
+      if (!txt) {
+        destLLRef.current = null;
+        setDestination(null);
+      }
     },
     [setDestination]
   );
@@ -1332,35 +1369,44 @@ export default function DirectionsSidebar({
     ro.observe(content);
     return () => ro.disconnect();
   }, [detailsMode, selectedRouteIndex, selectedOption, detailsRouteModelDisplay, snapshotPickers]);
-
-
   const handleSwap = useCallback(async () => {
-    // Capture visible labels so we can swap instantly (no sequential "loading" feel).
-    const originText = originRef.current ? (getPickerText(originRef.current) || "") : "";
-    const destText = destRef.current ? (getPickerText(destRef.current) || "") : "";
+    const oEl = originRef.current;
+    const dEl = destRef.current;
 
-    const originPlace = originRef.current?.value ?? null;
-    const destPlace = destRef.current?.value ?? null;
+    // Prefer our tracked LatLngs so swap works even though <gmpx-place-picker>.value is readonly
+    // (and can lag behind the visible text).
+    const currentOriginLL =
+      originLLRef.current ?? placeToLatLng(oEl?.value) ?? userLoc ?? null;
 
-    const currentOriginLL = placeToLatLng(originPlace) ?? userLoc ?? null;
-    const currentDestLL = destination ?? placeToLatLng(destPlace) ?? null;
+    const currentDestLL =
+      destLLRef.current ?? destination ?? placeToLatLng(dEl?.value) ?? null;
 
     if (!currentDestLL) return;
+
+    // Snapshot labels BEFORE touching inputs.
+    const snap = pickerSnapshotRef.current;
+    const originText = (oEl ? getPickerText(oEl) : "") || snap.originText || "";
+    const destText = (dEl ? getPickerText(dEl) : "") || snap.destText || "";
+
+    // Update refs immediately so a fast double-click swaps back correctly.
+    originLLRef.current = currentDestLL;
+    destLLRef.current = currentOriginLL;
 
     setOrigin(currentDestLL);
     if (currentOriginLL) setDestination(currentOriginLL);
     else setDestination(null);
 
-    // Update text immediately, then do the heavier populate calls in parallel.
-    if (originRef.current) forcePickerText(originRef.current, destText);
-    if (destRef.current) forcePickerText(destRef.current, originText);
+    // Only do an instant swap when we actually have labels; otherwise we rely on populate.
+    if (oEl && destText) forcePickerText(oEl, destText);
+    if (dEl && originText) forcePickerText(dEl, originText);
 
     const tasks = [];
-    if (originRef.current) tasks.push(populatePlacePickerFromLatLng(originRef.current, currentDestLL));
-    if (destRef.current) {
-      if (currentOriginLL) tasks.push(populatePlacePickerFromLatLng(destRef.current, currentOriginLL));
-      else forcePickerText(destRef.current, "");
+    if (oEl) tasks.push(populatePlacePickerFromLatLng(oEl, currentDestLL));
+    if (dEl) {
+      if (currentOriginLL) tasks.push(populatePlacePickerFromLatLng(dEl, currentOriginLL));
+      else forcePickerText(dEl, "");
     }
+
     if (tasks.length) await Promise.all(tasks.map((p) => p.catch(() => {})));
   }, [originRef, destRef, destination, setOrigin, setDestination, userLoc]);
 
