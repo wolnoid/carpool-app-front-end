@@ -330,6 +330,132 @@ export async function buildHybridOptions({
 
   const accessCache = new Map();
 
+  // ----------------------------------
+  // Direct SKATE-only options (no transit)
+  // ----------------------------------
+  // For SKATE mode, we intentionally do NOT request transit routes.
+  // We compare WALKING vs BICYCLING geometries, convert each to skateboard time
+  // using assumed speeds, and return the fastest options.
+  if (combo === ROUTE_COMBO.SKATE) {
+    const bikeReq = {
+      origin,
+      destination,
+      travelMode: "BICYCLING",
+      provideRouteAlternatives: true,
+    };
+    const walkReq = {
+      origin,
+      destination,
+      travelMode: "WALKING",
+      // Some regions may ignore alternatives for walking; that's fine.
+      provideRouteAlternatives: true,
+    };
+
+    const [bikeResult, walkResult] = await Promise.all([
+      routeOnce(ds, bikeReq),
+      routeOnce(ds, walkReq),
+    ]);
+
+    const bikeRoutes = bikeResult?.routes ?? [];
+    const walkRoutes = walkResult?.routes ?? [];
+
+    const opts = [];
+
+    function addSkateOption(route, result, geometryMode) {
+      if (!route) return;
+      const { dist, dur } = routeTotals(route);
+      const sec = geometryMode === "WALKING"
+        ? skateSecondsFromWalkSeconds(dur)
+        : skateSecondsFromGoogleBikeSeconds(dur);
+
+      const start =
+        kind === "ARRIVE_BY" && tDate
+          ? new Date(tDate.getTime() - sec * 1000)
+          : kind === "DEPART_AT" && tDate
+            ? tDate
+            : now;
+      const arrive = new Date(start.getTime() + sec * 1000);
+
+      opts.push({
+        kind: "DIRECT_SKATE",
+        baseRoute: route,
+        baseResult: result,
+        departTime: start,
+        arriveTime: arrive,
+        distanceMeters: dist,
+        durationSec: sec,
+        summary: route?.summary ?? "Skate",
+        segments: [
+          {
+            mode: "SKATE",
+            seconds: sec,
+            distanceMeters: dist,
+            route,
+            directionsResult: result,
+            skateGeometryMode: geometryMode,
+          },
+        ],
+      });
+    }
+
+    // Prefer multiple bike alternatives (they tend to include useful trail/greenway variants).
+    for (const r of bikeRoutes.slice(0, 4)) addSkateOption(r, bikeResult, "BICYCLING");
+
+    // Include the best walking geometry as an additional candidate.
+    if (walkRoutes?.[0]) addSkateOption(walkRoutes[0], walkResult, "WALKING");
+
+    // Sort + cap (same rules as below).
+    const targetArrive = kind === "ARRIVE_BY" && tDate ? tDate : null;
+    if (kind === "ARRIVE_BY" && targetArrive) {
+      opts.sort((a, b) => {
+        const aOk = a.arriveTime && a.arriveTime <= targetArrive;
+        const bOk = b.arriveTime && b.arriveTime <= targetArrive;
+        if (aOk !== bOk) return aOk ? -1 : 1;
+        const aDep = a.departTime?.getTime?.() ?? 0;
+        const bDep = b.departTime?.getTime?.() ?? 0;
+        if (aDep !== bDep) return bDep - aDep;
+        const aDur = a.durationSec ?? 0;
+        const bDur = b.durationSec ?? 0;
+        if (aDur !== bDur) return aDur - bDur;
+        const aArr = a.arriveTime?.getTime?.() ?? 0;
+        const bArr = b.arriveTime?.getTime?.() ?? 0;
+        return bArr - aArr;
+      });
+    } else {
+      opts.sort((a, b) => {
+        const aArr = a.arriveTime?.getTime?.() ?? (a.departTime?.getTime?.() ?? 0) + a.durationSec * 1000;
+        const bArr = b.arriveTime?.getTime?.() ?? (b.departTime?.getTime?.() ?? 0) + b.durationSec * 1000;
+        if (aArr !== bArr) return aArr - bArr;
+        const aDep = a.departTime?.getTime?.() ?? 0;
+        const bDep = b.departTime?.getTime?.() ?? 0;
+        if (aDep !== bDep) return bDep - aDep;
+        return (a.durationSec ?? 0) - (b.durationSec ?? 0);
+      });
+    }
+
+    const capped = opts.slice(0, Math.max(1, maxOptions));
+
+    return capped.map((o, idx) => {
+      const durationText = fmtDurationSec(o.durationSec);
+      const distanceText = fmtDistanceMeters(o.distanceMeters);
+      const summary = o.summary;
+      const departTimeText = o.departTime ? fmtTime(o.departTime) : "";
+      const arriveTimeText = o.arriveTime ? fmtTime(o.arriveTime) : "";
+      const timeRangeText = departTimeText && arriveTimeText ? `${departTimeText}–${arriveTimeText}` : "";
+      return {
+        ...o,
+        index: idx,
+        durationText,
+        distanceText,
+        summary,
+        departTimeText,
+        arriveTimeText,
+        timeRangeText,
+        sidebarSegments: [{ mode: "SKATE", durationText }],
+      };
+    });
+  }
+
   // Transit alternatives
   const transitReq = {
     origin,

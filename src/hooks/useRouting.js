@@ -2191,9 +2191,22 @@ function syncMicroMain(which, mode, route) {
         .then((refined) => {
           if (isStaleSeq(seq)) return;
           if (!refined) return;
-          // Rebuild waits after skate seconds change
-          const rebuilt = rebuildWaitSegments(refined, refined.segments);
-          updateHybridOptionsAtIndex(optIdx, rebuilt);
+
+          // Rebuild waits/totals after skate seconds change.
+          let next = rebuildWaitSegments(refined, refined.segments);
+
+          // If this is a transit+skate itinerary, recompute the recommended trip departure time
+          // so we don't show a small pre-stop WAIT after timing changes (elevation refinement).
+          const shifted = applyRecommendedDepartShift(next);
+          const comboNow = routeComboRef?.current ?? null;
+
+          if (shifted?.missed && comboNow === ROUTE_COMBO.TRANSIT_SKATE) {
+            replanHybridAfterMissedDeparture({ departTime: shifted.departTime, preserveVia: true }).catch(() => {});
+            return;
+          }
+
+          next = shifted?.option ?? next;
+          updateHybridOptionsAtIndex(optIdx, next);
         })
         .catch(() => {});
     }, 650);
@@ -2265,8 +2278,14 @@ function syncMicroMain(which, mode, route) {
             const refined = await refineSkateSegmentsWithElevation({ option: opt });
             if (isStaleSeq(seq)) return;
             if (refined) {
-              const rebuilt = rebuildWaitSegments(refined, refined.segments);
-              updateHybridOptionsAtIndex(0, rebuilt);
+              let next = rebuildWaitSegments(refined, refined.segments);
+              const shifted = applyRecommendedDepartShift(next);
+
+              // If refinement causes us to be late for a departure, we intentionally do NOT
+              // trigger another replan here because we're already inside a replan call.
+              // The next user interaction (or a later refine) can replan if needed.
+              next = shifted?.option ?? next;
+              updateHybridOptionsAtIndex(0, next);
             }
           } catch {
             // ignore
@@ -2676,11 +2695,14 @@ function syncMicroMain(which, mode, route) {
 
     const combo = routeComboRef?.current ?? null;
     const isHybridCombo =
-      combo === ROUTE_COMBO.TRANSIT_BIKE || combo === ROUTE_COMBO.TRANSIT_SKATE;
+      combo === ROUTE_COMBO.TRANSIT_BIKE ||
+      combo === ROUTE_COMBO.TRANSIT_SKATE ||
+      combo === ROUTE_COMBO.SKATE;
 
 
     // Keep the base-map bicycling overlay stable during a route session.
-    bikeLayerSessionRef.current = isHybridCombo;
+    bikeLayerSessionRef.current =
+      combo === ROUTE_COMBO.TRANSIT_BIKE || combo === ROUTE_COMBO.TRANSIT_SKATE;
     clearBikeResyncTimers();
     syncBikeLayer({ force: true });
 
@@ -2747,15 +2769,24 @@ function syncMicroMain(which, mode, route) {
         syncMarkersFromEndpoints(origin, destination);
 
         // Elevation refinement for skate (selected-only)
-        if (combo === ROUTE_COMBO.TRANSIT_SKATE) {
+        if (combo === ROUTE_COMBO.TRANSIT_SKATE || combo === ROUTE_COMBO.SKATE) {
           const opt = hybridOptionsRef.current?.[0];
           if (opt) {
             refineSkateSegmentsWithElevation({ option: opt })
               .then((refined) => {
                 if (isStaleSeq(seq)) return;
                 if (!refined) return;
-                const rebuilt = rebuildWaitSegments(refined, refined.segments);
-                updateHybridOptionsAtIndex(0, rebuilt);
+
+                let next = rebuildWaitSegments(refined, refined.segments);
+                const shifted = applyRecommendedDepartShift(next);
+
+                if (shifted?.missed && combo === ROUTE_COMBO.TRANSIT_SKATE) {
+                  replanHybridAfterMissedDeparture({ departTime: shifted.departTime, preserveVia: true }).catch(() => {});
+                  return;
+                }
+
+                next = shifted?.option ?? next;
+                updateHybridOptionsAtIndex(0, next);
               })
               .catch(() => {});
           }
@@ -2861,7 +2892,7 @@ function syncMicroMain(which, mode, route) {
       resyncBikeLayerSoon();
 
       const combo = routeComboRef?.current ?? null;
-      if (combo === ROUTE_COMBO.TRANSIT_SKATE) {
+      if (combo === ROUTE_COMBO.TRANSIT_SKATE || combo === ROUTE_COMBO.SKATE) {
         // Best-effort elevation refinement for the newly selected option (timing only)
         const opt = hybridOptionsRef.current?.[clamped];
         if (opt) {
@@ -2869,8 +2900,17 @@ function syncMicroMain(which, mode, route) {
             .then((refined) => {
               if (isStaleSeq(seq)) return;
               if (!refined) return;
-              const rebuilt = rebuildWaitSegments(refined, refined.segments);
-              updateHybridOptionsAtIndex(clamped, rebuilt);
+
+              let next = rebuildWaitSegments(refined, refined.segments);
+              const shifted = applyRecommendedDepartShift(next);
+
+              if (shifted?.missed && combo === ROUTE_COMBO.TRANSIT_SKATE) {
+                replanHybridAfterMissedDeparture({ departTime: shifted.departTime, preserveVia: true }).catch(() => {});
+                return;
+              }
+
+              next = shifted?.option ?? next;
+              updateHybridOptionsAtIndex(clamped, next);
             })
             .catch(() => {});
         }
