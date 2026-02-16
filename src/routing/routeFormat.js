@@ -40,3 +40,41 @@ export function asDate(x) {
   }
   return null;
 }
+
+// --- Transit formatting helpers ---
+// Used by both the routes pane and the details view.
+const AGENCY_ALIASES = [
+  { re: /Bay Area Rapid Transit/i, alias: "BART" },
+  { re: /San Francisco Municipal Transportation Agency/i, alias: "Muni" },
+  { re: /SFMTA/i, alias: "Muni" },
+  { re: /Sacramento Regional Transit/i, alias: "SacRT" },
+  { re: /Sacramento Regional Transit District/i, alias: "SacRT" },
+  { re: /Los Angeles County Metropolitan Transportation Authority/i, alias: "LA Metro" },
+  { re: /Metropolitan Transportation Authority/i, alias: "MTA" },
+  { re: /Washington Metropolitan Area Transit Authority/i, alias: "WMATA" },
+  { re: /Port Authority Trans-Hudson/i, alias: "PATH" },
+  { re: /Massachusetts Bay Transportation Authority/i, alias: "MBTA" },
+  { re: /Chicago Transit Authority/i, alias: "CTA" },
+  { re: /San Mateo County Transit District/i, alias: "SamTrans" },
+  { re: /Santa Clara Valley Transportation Authority/i, alias: "VTA" },
+  { re: /Caltrain/i, alias: "Caltrain" },
+  { re: /Amtrak/i, alias: "Amtrak" },
+];
+
+export function shortTransitAgencyName(name) {
+  const s = String(name || "").trim();
+  if (!s) return "";
+
+  // Already looks like an alias (e.g., BART, MBTA)
+  if (s.length <= 8 && /^[A-Z0-9&.-]+$/.test(s)) return s;
+
+  for (const { re, alias } of AGENCY_ALIASES) {
+    if (re.test(s)) return alias;
+  }
+
+  // If the name has a parenthetical short form, prefer it.
+  const m = s.match(/\(([^)]+)\)\s*$/);
+  if (m && m[1] && m[1].trim().length <= 10) return m[1].trim();
+
+  return s;
+}

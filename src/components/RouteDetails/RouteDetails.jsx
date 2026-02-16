@@ -1,5 +1,5 @@
 import styles from "./RouteDetails.module.css";
-import { formatDistanceMeters, formatDurationSec, formatTime } from "../../routing/routeFormat";
+import { formatDistanceMeters, formatDurationSec, formatTime, shortTransitAgencyName } from "../../routing/routeFormat";
 
 function decodeHtmlEntities(s) {
   if (!s) return "";
@@ -171,12 +171,13 @@ function SegmentHeader({ seg }) {
     const line = String(t.shortName || "").trim();
     const v = vehicleWord ? vehicleWord.toLowerCase() : "";
     const label = line ? (v ? `${line} ${v}` : line) : (v || "Transit");
+    const agency = shortTransitAgencyName(t.agency || "");
     return (
       <div className={styles.segHeader}>
         <div className={styles.segTitle}>
-          <span className={styles.badge}>Transit</span>
-          <span className={styles.segMain}>{label ? ` ${label}` : ""}</span>
-          {dur ? <span className={styles.segSecondary}> · {dur}</span> : null}
+          <span className={styles.badge}>{label || "Transit"}</span>
+          {dur ? <span className={styles.segMain}> {dur}</span> : null}
+          {agency ? <span className={styles.segSecondary}> · {agency}</span> : null}
         </div>
         <div className={styles.segMeta}>
           {t.depStop && t.arrStop ? (

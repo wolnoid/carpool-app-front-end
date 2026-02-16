@@ -14,6 +14,7 @@ import {
   isSkateOn,
   nextCombo,
 } from "../../routing/routeCombos";
+import { shortTransitAgencyName } from "../../routing/routeFormat";
 import RouteDetails from "../RouteDetails/RouteDetails.jsx";
 
 const LS_KEY = "carpool.sidebarCollapsed";
@@ -132,42 +133,6 @@ function transitServiceName(transitDetails) {
   return a0?.name || a0?.short_name || a0?.shortName || "";
 }
 
-const AGENCY_ALIASES = [
-  { re: /Bay Area Rapid Transit/i, alias: "BART" },
-  { re: /San Francisco Municipal Transportation Agency/i, alias: "Muni" },
-  { re: /SFMTA/i, alias: "Muni" },
-  { re: /Sacramento Regional Transit/i, alias: "SacRT" },
-  { re: /Sacramento Regional Transit District/i, alias: "SacRT" },
-  { re: /Los Angeles County Metropolitan Transportation Authority/i, alias: "LA Metro" },
-  { re: /Metropolitan Transportation Authority/i, alias: "MTA" },
-  { re: /Washington Metropolitan Area Transit Authority/i, alias: "WMATA" },
-  { re: /Port Authority Trans-Hudson/i, alias: "PATH" },
-  { re: /Massachusetts Bay Transportation Authority/i, alias: "MBTA" },
-  { re: /Chicago Transit Authority/i, alias: "CTA" },
-  { re: /San Mateo County Transit District/i, alias: "SamTrans" },
-  { re: /Santa Clara Valley Transportation Authority/i, alias: "VTA" },
-  { re: /Caltrain/i, alias: "Caltrain" },
-  { re: /Amtrak/i, alias: "Amtrak" },
-];
-
-function shortTransitAgencyName(name) {
-  const s = String(name || "").trim();
-  if (!s) return "";
-
-  // Already looks like an alias (e.g., BART, MBTA)
-  if (s.length <= 8 && /^[A-Z0-9&.-]+$/.test(s)) return s;
-
-  for (const { re, alias } of AGENCY_ALIASES) {
-    if (re.test(s)) return alias;
-  }
-
-  // If the name has a parenthetical short form, prefer it.
-  const m = s.match(/\(([^)]+)\)\s*$/);
-  if (m && m[1] && m[1].trim().length <= 10) return m[1].trim();
-
-  return s;
-}
-
 function stripHtml(html) {
   return String(html || "")
     .replace(/<[^>]*>/g, "")
@@ -262,7 +227,7 @@ function buildSidebarSegmentsFromHybridOption(option) {
     if (mode === "TRANSIT") {
       const td = seg?.transitDetails || seg?.step?.transit || seg?.step?.transit_details || seg?.transit || seg?.transit_details || null;
       const explicit = getExplicitLineColor(td);
-      const label = transitLineWithMode(td);
+      const label = transitLabel(td);
       const glyph = vehicleGlyphFromType(transitVehicleType(td));
       out.push({
         key: `t-${i}`,

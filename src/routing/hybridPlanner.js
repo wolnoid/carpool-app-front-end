@@ -28,11 +28,14 @@ const SKATE_MPS_FLAT = SKATE_MPH_FLAT * MPH_TO_MPS;
 const SKATE_MPS_CAP = SKATE_MPH_DOWNHILL_CAP * MPH_TO_MPS;
 
 function fmtDurationSec(sec) {
-  const s = Math.max(0, Math.round(sec));
-  const h = Math.floor(s / 3600);
-  const m = Math.round((s % 3600) / 60);
-  if (h > 0) return `${h} hr ${m} min`;
-  return `${m} min`;
+  const s = Math.max(0, Math.round(sec ?? 0));
+  const mins = Math.round(s / 60);
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  // If the duration is an exact hour, avoid a noisy "0 min" suffix.
+  if (m === 0) return `${h} hr`;
+  return `${h} hr ${m} min`;
 }
 
 function fmtTime(d) {
