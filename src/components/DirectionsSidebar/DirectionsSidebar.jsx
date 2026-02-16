@@ -794,6 +794,98 @@ function carryHiddenMinuteMovesExceptEnds(segments) {
   return segs.filter((_, i) => !hidden.has(i) && Math.round(Number(segs[i]?.durationSec || 0) / 60) > 0);
 }
 
+// If there are too many itinerary bubbles to fit in the visible bar,
+// hide WAIT bubbles first (starting with the shortest wait) until it fits.
+function useItinerarySegmentsFit(baseSegments) {
+  const [el, setEl] = useState(null);
+  const barRef = useCallback((node) => {
+    setEl(node || null);
+  }, []);
+  const [barW, setBarW] = useState(0);
+
+  // IMPORTANT: callers rebuild arrays frequently (new references) even when the
+  // itinerary is effectively the same. If we key effects off the array identity,
+  // we’ll thrash and you’ll see WAIT bubbles flicker. So we derive a stable
+  // signature from keys + durations and only react to meaningful changes.
+  const baseSig = useMemo(() => {
+    const segs = Array.isArray(baseSegments) ? baseSegments : [];
+    return segs
+      .map((s) => `${String(s?.key || "")}:${Math.round(Number(s?.durationSec || 0))}`)
+      .join("|");
+  }, [baseSegments]);
+
+  // Freeze a stable base array while baseSig is unchanged.
+  const stableBase = useMemo(() => (Array.isArray(baseSegments) ? baseSegments : []), [baseSig]);
+
+  const [hiddenWaitKeys, setHiddenWaitKeys] = useState([]);
+
+  // Reset hidden waits when the actual itinerary changes.
+  useEffect(() => {
+    setHiddenWaitKeys([]);
+  }, [baseSig]);
+
+  // Track bar width changes.
+  useEffect(() => {
+    if (!el || typeof ResizeObserver !== "function") return;
+
+    const update = () => setBarW(el.clientWidth || 0);
+    update();
+    const ro = new ResizeObserver(() => update());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+
+  // Decide which WAIT bubbles to hide (shortest first) when the row gets too crowded.
+  // We use a "minimum comfortable pill width" heuristic (count-based) because flex-shrink
+  // can make scrollWidth stay <= clientWidth even when pills look crushed.
+  useLayoutEffect(() => {
+    if (!el) return;
+
+    const clientW = el.clientWidth || 0;
+    if (clientW <= 0) return;
+
+    const cs = window.getComputedStyle(el);
+    const gap = parseFloat(cs.columnGap || cs.gap || "6") || 6;
+
+    const MIN_PILL_PX = 36;
+    const SAFETY_PX = 8;
+
+    const maxCount = Math.max(
+      1,
+      Math.floor((clientW - SAFETY_PX + gap) / (MIN_PILL_PX + gap))
+    );
+
+    const overflow = (el.scrollWidth || 0) > clientW + 1;
+
+    // How many segments do we need to remove (if possible) to get back under maxCount?
+    let needToRemove = Math.max(0, stableBase.length - maxCount);
+
+    // If we are truly overflowing, try removing at least one WAIT as a fallback.
+    if (needToRemove === 0 && overflow) needToRemove = 1;
+
+    const waits = stableBase
+      .filter((s) => isWaitSegment(s))
+      .map((s) => ({ key: s.key, dur: Number(s?.durationSec || 0) }))
+      .sort((a, b) => a.dur - b.dur);
+
+    const desired =
+      needToRemove > 0
+        ? waits.slice(0, Math.min(needToRemove, waits.length)).map((w) => w.key)
+        : [];
+
+    const same =
+      desired.length === hiddenWaitKeys.length &&
+      desired.every((k, idx) => k === hiddenWaitKeys[idx]);
+
+    if (!same) setHiddenWaitKeys(desired);
+  }, [el, barW, baseSig, stableBase, hiddenWaitKeys]);
+
+  const hiddenSet = useMemo(() => new Set(hiddenWaitKeys), [hiddenWaitKeys]);
+  const segs = useMemo(() => stableBase.filter((s) => !hiddenSet.has(s.key)), [stableBase, hiddenSet]);
+
+  return { barRef, segs };
+}
+
 
 function ItinBubble({ seg }) {
   const segRef = useRef(null);
@@ -918,7 +1010,8 @@ function ItinBubble({ seg }) {
 
 function RouteCard({ option, selected, expanded, onSelect, onDetails, routeCombo }) {
   const allSegs = buildSidebarSegments(option, routeCombo);
-  const segs = useMemo(() => carryHiddenMinuteMoves(allSegs), [allSegs]);
+  const baseSegs = useMemo(() => carryHiddenMinuteMoves(allSegs), [allSegs]);
+  const { barRef: itinBarRef, segs } = useItinerarySegmentsFit(baseSegs);
 
   const timeText = timeRangeTextForOption(option);
   const durationText = option?.durationText || "—";
@@ -1006,7 +1099,7 @@ function RouteCard({ option, selected, expanded, onSelect, onDetails, routeCombo
         </div>
 
         {/* Visual itinerary bar only (relative widths) */}
-        <div className={styles.itinBar}>
+        <div ref={itinBarRef} className={styles.itinBar}>
           {segs.map((s) => (
             <ItinBubble key={s.key} seg={s} />
           ))}
@@ -1159,6 +1252,10 @@ export default function DirectionsSidebar({
   isLoadingRoutes = false,
   selectedRouteIndex = 0,
   onSelectRoute,
+
+  // Map viewport helpers
+  onZoomToRoute,
+  onZoomToAllRoutes,
 }) {
   const internalOriginRef = useRef(null);
   const internalDestRef = useRef(null);
@@ -1370,6 +1467,13 @@ export default function DirectionsSidebar({
     return { ...detailsRouteModel, segments: segs };
   }, [detailsRouteModel]);
 
+  const detailsItinBaseSegs = useMemo(() => {
+    if (!selectedOption) return [];
+    return carryHiddenMinuteMovesExceptEnds(buildSidebarSegments(selectedOption, routeCombo));
+  }, [selectedOption, routeCombo]);
+
+  const { barRef: detailsItinRef, segs: detailsItinSegs } = useItinerarySegmentsFit(detailsItinBaseSegs);
+
   useLayoutEffect(() => {
     if (detailsMode !== "INLINE") return;
 
@@ -1393,6 +1497,28 @@ export default function DirectionsSidebar({
     ro.observe(content);
     return () => ro.disconnect();
   }, [detailsMode, selectedRouteIndex, selectedOption, detailsRouteModelDisplay, snapshotPickers]);
+
+  // While already viewing route details, selecting a different route on the map should
+  // zoom/focus to that newly-selected route. Outside of details view, map clicks should
+  // NOT change the current viewport.
+  const prevDetailsModeForZoomRef = useRef(detailsMode);
+  const prevSelectedIdxForZoomRef = useRef(selectedRouteIndex);
+  useEffect(() => {
+    const prevMode = prevDetailsModeForZoomRef.current;
+    const prevIdx = prevSelectedIdxForZoomRef.current;
+
+    // Update refs first for the next run.
+    prevDetailsModeForZoomRef.current = detailsMode;
+    prevSelectedIdxForZoomRef.current = selectedRouteIndex;
+
+    const wasInDetails = prevMode !== "NONE";
+    const isInDetails = detailsMode !== "NONE";
+    if (!wasInDetails || !isInDetails) return;
+    if (prevIdx === selectedRouteIndex) return;
+
+    if (typeof onZoomToRoute === "function") onZoomToRoute(selectedRouteIndex);
+  }, [detailsMode, selectedRouteIndex, onZoomToRoute]);
+
   const handleSwap = useCallback(async () => {
     const oEl = originRef.current;
     const dEl = destRef.current;
@@ -1659,8 +1785,8 @@ export default function DirectionsSidebar({
         </div>
 
         {detailsMode === "FULL" && selectedOption && detailsRouteModelDisplay ? (
-        <div className={styles.detailsFullScroll}>
-                    <div className={styles.detailsPane}>
+        <div className={styles.detailsFull}>
+                    <div className={`${styles.detailsPane} ${styles.detailsPaneFull}`}>
                       <div className={styles.detailsStickyStack}>
                         {/* In FULL details mode (top controls hidden), show origin/destination at the very top of the sidebar in its own element. */}
                         <div className={styles.detailsODCard}>
@@ -1685,7 +1811,10 @@ export default function DirectionsSidebar({
                             <button
                               type="button"
                               className={styles.backBtn}
-                              onClick={() => setDetailsMode("NONE")}
+                              onClick={() => {
+                                onZoomToAllRoutes?.();
+                                setDetailsMode("NONE");
+                              }}
                               aria-label="Back"
                             >
                               <BackIcon />
@@ -1697,15 +1826,17 @@ export default function DirectionsSidebar({
                             </div>
                           </div>
 
-                          <div className={styles.detailsItinBar}>
-                            {carryHiddenMinuteMovesExceptEnds(buildSidebarSegments(selectedOption, routeCombo)).map((s) => (
+                          <div ref={detailsItinRef} className={styles.detailsItinBar}>
+                            {detailsItinSegs.map((s) => (
                               <ItinBubble key={s.key} seg={s} />
                             ))}
                           </div>
                         </div>
                       </div>
 
-                      <RouteDetails route={detailsRouteModelDisplay} hideTop />
+                      <div className={styles.detailsFullBody}>
+                        <RouteDetails route={detailsRouteModelDisplay} hideTop bare />
+                      </div>
                     </div>
 
                     <div ref={directionsPanelRef} className={styles.hiddenPanel} />
@@ -1720,7 +1851,10 @@ export default function DirectionsSidebar({
             <button
                                 type="button"
                                 className={styles.backBtn}
-                                onClick={() => setDetailsMode("NONE")}
+                                onClick={() => {
+                                  onZoomToAllRoutes?.();
+                                  setDetailsMode("NONE");
+                                }}
                                 aria-label="Back"
                               >
                               <BackIcon />
@@ -1731,8 +1865,8 @@ export default function DirectionsSidebar({
                                   <div className={styles.detailsDuration}>{selectedOption.durationText || "—"}</div></div>
           </div>
 
-          <div className={styles.detailsItinBar}>
-                                  {carryHiddenMinuteMovesExceptEnds(buildSidebarSegments(selectedOption, routeCombo)).map((s) => (
+          <div ref={detailsItinRef} className={styles.detailsItinBar}>
+                                  {detailsItinSegs.map((s) => (
                                     <ItinBubble key={s.key} seg={s} />
                                   ))}</div>
         </div>
@@ -1768,8 +1902,17 @@ export default function DirectionsSidebar({
                                         setDetailsMode("NONE");
                                         onSelectRoute?.(r.index);
                                       }}
-                                      onDetails={() => {
-                                        if (selectedRouteIndex !== r.index) onSelectRoute?.(r.index);
+                                      onDetails={async () => {
+                                        if (selectedRouteIndex !== r.index) {
+                                          try {
+                                            await onSelectRoute?.(r.index);
+                                          } catch {
+                                            // ignore
+                                          }
+                                        }
+
+                                        onZoomToRoute?.(r.index);
+
                                         const model = buildRouteDetailsModel(r);
                                         if (!model) return;
                                         setDetailsMode("INLINE");

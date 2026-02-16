@@ -283,6 +283,8 @@ export default function Landing() {
             isLoadingRoutes={routing.isLoading}
             selectedRouteIndex={routing.selectedRouteIndex}
             onSelectRoute={routing.selectRoute}
+            onZoomToRoute={routing.zoomToRoute}
+            onZoomToAllRoutes={routing.zoomToAllRoutes}
             selectedSegments={routing.selectedSegments}
             showGooglePanel={routing.showGooglePanel}
           />

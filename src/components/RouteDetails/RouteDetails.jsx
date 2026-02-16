@@ -214,7 +214,7 @@ function SegmentHeader({ seg }) {
   );
 }
 
-export default function RouteDetails({ route, hideTop = false, className = "" }) {
+export default function RouteDetails({ route, hideTop = false, bare = false, className = "" }) {
   if (!route) return null;
 
   const dur = formatDurationSec(route.totalDurationSec);
@@ -223,7 +223,7 @@ export default function RouteDetails({ route, hideTop = false, className = "" })
   const arr = formatTime(route.arrivalTime);
 
   return (
-    <section className={`${styles.wrap} ${className}`}>
+    <section className={`${styles.wrap} ${bare ? styles.bare : ""} ${className}`.trim()}>
       {!hideTop && (
         <div className={styles.top}>
           <div className={styles.topMain}>

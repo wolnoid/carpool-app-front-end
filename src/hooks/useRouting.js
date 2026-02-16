@@ -740,6 +740,59 @@ useEffect(() => {
     }
   }
 
+  function computeAdaptiveFitPadding({ tight = false } = {}) {
+    const mapDiv = map?.getDiv?.();
+    const rect = mapDiv?.getBoundingClientRect?.();
+    const mapW = rect?.width ?? 800;
+
+    // Base padding scales with map width.
+    // Tight mode is used when focusing a single route.
+    const frac = tight ? 0.07 : 0.08;
+    const basePad = Math.max(20, Math.min(60, Math.round(mapW * frac)));
+
+    // If the map starts near the window left edge, sidebar is probably overlaying the map.
+    const sidebarLikelyOverlaying = (rect?.left ?? 9999) < 40;
+    const leftPad = sidebarLikelyOverlaying
+      ? Math.max(basePad, Math.min(380, Math.round(mapW * 0.35)))
+      : basePad;
+
+    return { padding: { top: basePad, right: basePad, bottom: basePad, left: leftPad }, mapW };
+  }
+
+  function fitPathInView(path, { tight = false } = {}) {
+    if (!map || !path?.length) return;
+
+    const bounds = new window.google.maps.LatLngBounds();
+    let hasAny = false;
+
+    for (const p of path) {
+      const n = latLngToNums(p);
+      if (!n) continue;
+      if (Math.abs(n.lat) > 89.999 || Math.abs(n.lng) > 180) continue;
+      bounds.extend(n);
+      hasAny = true;
+    }
+
+    if (!hasAny) return;
+    const { padding } = computeAdaptiveFitPadding({ tight });
+    map.fitBounds(bounds, padding);
+  }
+
+  function getRouteOverviewPath(route) {
+    const p = route?.overview_path;
+    if (Array.isArray(p) && p.length) return p;
+
+    const pts = route?.overview_polyline?.points;
+    if (pts && window.google?.maps?.geometry?.encoding?.decodePath) {
+      try {
+        return window.google.maps.geometry.encoding.decodePath(pts);
+      } catch {
+        // ignore
+      }
+    }
+    return [];
+  }
+
   // ---------------------------
   // Primary route drawing (custom polylines)
   // ---------------------------
@@ -1604,6 +1657,74 @@ function addShadowPolyline({ path, strokeWeight = 8, zIndex = 0, isAlt = false, 
       }
     });
     return path;
+  }
+
+  // Public helpers for the UI to control map viewport when entering/exiting route details.
+  function zoomToRoute(idx) {
+    if (!map) return;
+
+    const seq = requestSeqRef.current;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (isStaleSeq(seq)) return;
+
+        const hybrid = hybridOptionsRef.current;
+        if (hybrid?.length) {
+          const maxIdx = hybrid.length - 1;
+          const clamped = Math.max(0, Math.min(idx, maxIdx));
+          const opt = hybrid[clamped];
+          const path = optionCombinedPath(opt);
+          if (path?.length) fitPathInView(path, { tight: true });
+          return;
+        }
+
+        const full = fullDirectionsRef.current;
+        const routes = full?.routes ?? [];
+        if (!routes.length) return;
+        const maxIdx = routes.length - 1;
+        const clamped = Math.max(0, Math.min(idx, maxIdx));
+        const route = routes[clamped];
+        const path = getRouteOverviewPath(route);
+        if (path?.length) fitPathInView(path, { tight: true });
+      });
+    });
+  }
+
+  function zoomToAllRoutes() {
+    if (!map) return;
+
+    const seq = requestSeqRef.current;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (isStaleSeq(seq)) return;
+
+        const hybrid = hybridOptionsRef.current;
+        if (hybrid?.length) {
+          const bounds = new window.google.maps.LatLngBounds();
+          let hasAny = false;
+          for (const opt of hybrid) {
+            const p = optionCombinedPath(opt);
+            if (!p?.length) continue;
+            for (const ll of p) {
+              const n = latLngToNums(ll);
+              if (!n) continue;
+              if (Math.abs(n.lat) > 89.999 || Math.abs(n.lng) > 180) continue;
+              bounds.extend(n);
+              hasAny = true;
+            }
+          }
+          if (!hasAny) return;
+          const { padding } = computeAdaptiveFitPadding({ tight: false });
+          map.fitBounds(bounds, padding);
+          return;
+        }
+
+        const full = fullDirectionsRef.current;
+        if (full?.routes?.length) {
+          fitAllRoutesInView(full, selectedIdxRef.current ?? 0);
+        }
+      });
+    });
   }
 
   function drawHybridStopsForOption(option) {
@@ -3392,6 +3513,8 @@ function clearRoute() {
     routeOptions,
     selectedRouteIndex,
     selectRoute,
+    zoomToRoute,
+    zoomToAllRoutes,
     selectedSegments,
     showGooglePanel,
     isLoading,
