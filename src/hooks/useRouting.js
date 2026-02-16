@@ -118,6 +118,8 @@ export function useRouting({
   const [selectedSegments, setSelectedSegments] = useState(null);
   const [showGooglePanel, setShowGooglePanel] = useState(true);
 
+  const [isLoading, setIsLoading] = useState(false);
+
   const [routeOptions, setRouteOptions] = useState([]);
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
   const selectedIdxRef = useRef(0);
@@ -148,6 +150,19 @@ export function useRouting({
   const bikeLayerSessionRef = useRef(false);
   const bikeLayerLoadPromiseRef = useRef(null);
   const bikeKeepAliveRef = useRef({ idle: null, type: null });
+  const bikeResyncTimersRef = useRef([]);
+
+  function clearBikeResyncTimers() {
+    const timers = bikeResyncTimersRef.current;
+    bikeResyncTimersRef.current = [];
+    for (const t of timers) {
+      try {
+        clearTimeout(t);
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   function wantsBikeLayerForCombo() {
     const combo = routeComboRef?.current ?? null;
@@ -185,7 +200,17 @@ export function useRouting({
     }
 
     const next = Boolean(visible && enabled && map);
-    if (!force && bikeLayerShownRef.current === next) return;
+
+    // Some Google Maps internal operations can clear overlay layers without us being notified.
+    // If the desired state matches but the *actual* layer state differs, re-attach.
+    let actualShown = null;
+    try {
+      actualShown = Boolean(layer.getMap?.());
+    } catch {
+      actualShown = null;
+    }
+
+    if (!force && bikeLayerShownRef.current === next && (actualShown == null || actualShown === next)) return;
     bikeLayerShownRef.current = next;
     try {
       layer.setMap(next ? map : null);
@@ -208,13 +233,23 @@ export function useRouting({
         // ignore
       }
     };
+
+    // Burst re-assert: route selection / setDirections can clear overlays *after* our immediate re-sync.
+    // A short burst dramatically reduces the "bike layer flickers then disappears" behavior.
+    clearBikeResyncTimers();
     try {
       requestAnimationFrame(() => {
         fn();
-        setTimeout(fn, 0);
+        bikeResyncTimersRef.current.push(setTimeout(fn, 0));
+        bikeResyncTimersRef.current.push(setTimeout(fn, 60));
+        bikeResyncTimersRef.current.push(setTimeout(fn, 220));
+        bikeResyncTimersRef.current.push(setTimeout(fn, 600));
       });
     } catch {
-      setTimeout(fn, 0);
+      bikeResyncTimersRef.current.push(setTimeout(fn, 0));
+      bikeResyncTimersRef.current.push(setTimeout(fn, 60));
+      bikeResyncTimersRef.current.push(setTimeout(fn, 220));
+      bikeResyncTimersRef.current.push(setTimeout(fn, 600));
     }
   }
 
@@ -246,6 +281,7 @@ export function useRouting({
     syncBikeLayer({ force: true });
 
     return () => {
+      clearBikeResyncTimers();
       try {
         bikeKeepAliveRef.current.idle?.remove?.();
       } catch {
@@ -2645,6 +2681,7 @@ function syncMicroMain(which, mode, route) {
 
     // Keep the base-map bicycling overlay stable during a route session.
     bikeLayerSessionRef.current = isHybridCombo;
+    clearBikeResyncTimers();
     syncBikeLayer({ force: true });
 
     // Clear all existing overlays immediately so nothing from the previous search lingers.
@@ -2660,6 +2697,10 @@ function syncMicroMain(which, mode, route) {
     const origin = originOverride ?? originRef.current ?? ul ?? fallbackCenter;
     const destination = destinationOverride ?? destinationRef.current;
     if (!destination) return;
+
+    setIsLoading(true);
+
+    try {
 
     const viaPts = viaPointsOverride ?? viaPointsRef.current;
 
@@ -2756,55 +2797,44 @@ function syncMicroMain(which, mode, route) {
     try {
       const result = await ds.route(req);
       if (isStaleSeq(seq)) return;
+
       const routesCount = result?.routes?.length ?? 0;
+      const idx = 0;
+
+      // Keep sidebar cards populated even when Google returns only a single bike/skate route.
+      fullDirectionsRef.current = result;
+      setSelectedRouteIndex(idx);
+      selectedIdxRef.current = idx;
+      setRouteOptions(summarizeDirectionsRoutes(result, transitTimeRef?.current));
+
+      // Render only the selected route via DirectionsRenderer (we draw our own visible polylines).
+      renderPrimaryOnlyFromFull(result, idx);
+
+      const route = result?.routes?.[idx];
+      if (route) {
+        hasActiveRouteRef.current = true;
+        syncMarkersFromRoute(route);
+        drawPrimaryPolylinesFromRoute(route);
+      }
 
       if (alternatives && routesCount > 1) {
-        fullDirectionsRef.current = result;
-
-        const idx = 0;
-        setSelectedRouteIndex(idx);
-        selectedIdxRef.current = idx;
-        setRouteOptions(summarizeDirectionsRoutes(result));
-
-        renderPrimaryOnlyFromFull(result, idx);
-        syncMarkersFromRoute(result.routes[idx]);
-        drawPrimaryPolylinesFromRoute(result.routes[idx]);
         drawAlternatePolylines(result, idx);
-
-        if (fitToRoutes) {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (!isStaleSeq(seq)) fitAllRoutesInView(result, idx);
-            });
-          });
-        }
       } else {
-        clearAlternativesState();
+        clearAltPolylines();
+      }
 
-        programmaticUpdateRef.current = true;
-        dr.setDirections(result);
-
-        const route = result?.routes?.[0];
-        if (route) {
-          hasActiveRouteRef.current = true;
-          syncMarkersFromRoute(route);
-          drawPrimaryPolylinesFromRoute(route);
-        }
-
-        if (fitToRoutes) {
+      if (fitToRoutes) {
+        requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (!isStaleSeq(seq)) fitAllRoutesInView(result, 0);
-            });
+            if (!isStaleSeq(seq)) fitAllRoutesInView(result, idx);
           });
-        }
-
-        setTimeout(() => {
-          programmaticUpdateRef.current = false;
-        }, 0);
+        });
       }
     } catch (err) {
       console.error("Directions route() failed:", err);
+    }
+    } finally {
+      if (!isStaleSeq(seq)) setIsLoading(false);
     }
   }
 
@@ -2908,9 +2938,18 @@ function syncMicroMain(which, mode, route) {
         const route = dir?.routes?.[0];
         if (!route) return;
 
-        if (fullDirectionsRef.current) {
-          clearAlternativesState();
+        const prevFull = fullDirectionsRef.current;
+
+        // If the user drags the route line, drop any drawn alternates and keep the sidebar
+        // in sync with the newly computed single route.
+        if (prevFull?.routes?.length > 1) {
+          clearAltPolylines();
         }
+
+        fullDirectionsRef.current = dir;
+        setRouteOptions(summarizeDirectionsRoutes(dir, transitTimeRef?.current));
+        setSelectedRouteIndex(0);
+        selectedIdxRef.current = 0;
 
         syncMarkersFromRoute(route);
         drawPrimaryPolylinesFromRoute(route);
@@ -3274,6 +3313,7 @@ function clearRoute() {
 
   // End the hybrid bike/skate session and detach the bicycling layer.
   bikeLayerSessionRef.current = false;
+  clearBikeResyncTimers();
   syncBikeLayer({ force: true });
 
   // Prevent any pending directions_changed handler from re-drawing after clear.
@@ -3296,6 +3336,7 @@ function clearRoute() {
   clearRouteMarkers();
 
   // Release the guard after the current tick, but only if nothing newer started.
+  setIsLoading(false);
   setTimeout(() => {
     if (!isStaleSeq(seq)) programmaticUpdateRef.current = false;
   }, 0);
@@ -3310,5 +3351,6 @@ function clearRoute() {
     selectRoute,
     selectedSegments,
     showGooglePanel,
+    isLoading,
   };
 }

@@ -121,7 +121,7 @@ export default function Landing() {
   useEffect(() => {
     transitTimeRef.current = {
       kind: timeKind,
-      date: timeKind === "NOW" ? null : timeValue,
+      date: timeValue,
     };
   }, [timeKind, timeValue]);
 
@@ -280,6 +280,7 @@ export default function Landing() {
             originPickerRef={originPickerRef}
             destPickerRef={destPickerRef}
             routeOptions={routing.routeOptions}
+            isLoadingRoutes={routing.isLoading}
             selectedRouteIndex={routing.selectedRouteIndex}
             onSelectRoute={routing.selectRoute}
             selectedSegments={routing.selectedSegments}

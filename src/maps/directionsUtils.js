@@ -61,15 +61,25 @@ function fmtTime(d) {
   }
 }
 
-export function summarizeDirectionsRoutes(directions) {
+// Summarize Google DirectionsResult.routes into lightweight cards for the Routes pane.
+// If a route does not include API-provided departure/arrival times (bike/walk/skate),
+// we synthesize them from the user's selected time (NOW/DEPART_AT/ARRIVE_BY) + duration.
+export function summarizeDirectionsRoutes(directions, timeCtx = null) {
   const routes = directions?.routes ?? [];
+
+  const kind = String(timeCtx?.kind || "NOW");
+  const ctxDate = coerceDate(timeCtx?.date);
+  // For NOW, prefer the caller-provided moving clock (if given), otherwise "now".
+  const baseNow = kind === "NOW" ? (ctxDate ?? new Date()) : ctxDate;
+
   return routes.map((r, index) => {
     const legs = r?.legs ?? [];
     const distMeters = legs.reduce((s, l) => s + (l?.distance?.value ?? 0), 0);
     const durSeconds = legs.reduce((s, l) => s + (l?.duration?.value ?? 0), 0);
 
-    const durationText =
-      legs.length === 1 ? legs?.[0]?.duration?.text ?? "" : formatDuration(durSeconds);
+    // Always prefer our own formatter (based on duration.value) so we avoid
+    // noisy strings like "1 hr 0 min".
+    const durationText = formatDuration(durSeconds) || (legs?.[0]?.duration?.text ?? "");
 
     // use API-provided text if single-leg; else estimate in miles
     let distanceText = legs?.[0]?.distance?.text ?? "";
@@ -81,11 +91,30 @@ export function summarizeDirectionsRoutes(directions) {
     const firstLeg = legs?.[0] ?? null;
     const lastLeg = legs?.[legs.length - 1] ?? null;
 
-    const departTime = coerceDate(firstLeg?.departure_time) ?? null;
-    const arriveTime = coerceDate(lastLeg?.arrival_time) ?? null;
+    // Transit legs typically include departure_time/arrival_time.
+    // Bike/walk legs usually don't—synthesize based on selected time + duration.
+    let departTime = coerceDate(firstLeg?.departure_time) ?? null;
+    let arriveTime = coerceDate(lastLeg?.arrival_time) ?? null;
 
-    const departTimeText = firstLeg?.departure_time?.text ?? (departTime ? fmtTime(departTime) : "");
-    const arriveTimeText = lastLeg?.arrival_time?.text ?? (arriveTime ? fmtTime(arriveTime) : "");
+    if (
+      (!departTime || !arriveTime) &&
+      baseNow instanceof Date &&
+      !Number.isNaN(baseNow.getTime())
+    ) {
+      if (kind === "ARRIVE_BY") {
+        arriveTime = arriveTime ?? baseNow;
+        departTime = departTime ?? new Date(arriveTime.getTime() - durSeconds * 1000);
+      } else {
+        // NOW or DEPART_AT: anchor on departure.
+        departTime = departTime ?? baseNow;
+        arriveTime = arriveTime ?? new Date(departTime.getTime() + durSeconds * 1000);
+      }
+    }
+
+    const departTimeText =
+      firstLeg?.departure_time?.text ?? (departTime ? fmtTime(departTime) : "");
+    const arriveTimeText =
+      lastLeg?.arrival_time?.text ?? (arriveTime ? fmtTime(arriveTime) : "");
     const timeRangeText =
       departTimeText && arriveTimeText ? `${departTimeText}–${arriveTimeText}` : "";
 
@@ -94,6 +123,10 @@ export function summarizeDirectionsRoutes(directions) {
       summary: r?.summary || `Route ${index + 1}`,
       distanceText,
       durationText,
+      // Helpful for UI/components that need to inspect the underlying route.
+      __route: r,
+      distanceMeters: distMeters,
+      durationSec: durSeconds,
       departTime,
       arriveTime,
       departTimeText,

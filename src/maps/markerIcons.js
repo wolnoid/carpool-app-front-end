@@ -28,7 +28,7 @@ export function createStartIcon() {
   const gp = googleSizePoint();
   if (!gp) return { url };
   const { Size, Point } = gp;
-  return { url, scaledSize: new Size(26, 26), anchor: new Point(13, 13) };
+  return { url, scaledSize: new Size(23, 23), anchor: new Point(13, 13) };
 }
 
 export function createEndIcon() {
@@ -36,5 +36,5 @@ export function createEndIcon() {
   const gp = googleSizePoint();
   if (!gp) return { url };
   const { Size, Point } = gp;
-  return { url, scaledSize: new Size(32, 44), anchor: new Point(16, 43) };
+  return { url, scaledSize: new Size(25, 34), anchor: new Point(16, 43) };
 }

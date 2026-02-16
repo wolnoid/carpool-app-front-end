@@ -28,7 +28,6 @@
   min-height: 0;
 
   /* we control scrolling inside resultsScroll */
-  overflow: hidden;
 
   padding: 12px 12px 14px;
   display: flex;
@@ -43,15 +42,43 @@
   gap: 12px;
 }
 
+/* Keep pickers mounted in FULL details mode; just hide the whole control stack. */
+.topControlsHidden {
+  display: none;
+}
+
 .resultsScroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
 
+  /* Pull the scrollbar closer to the sidebar edge while keeping content padding. */
+  margin-right: -12px;
+  padding-right: 12px;
+
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
+
+
+.inlineDetailsWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detailsFullScroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-right: -12px;
+  padding-right: 12px;
+}
+
 
 /* ---- Collapsed state ---- */
 .sidebarCollapsed {
@@ -351,6 +378,10 @@
   gap: 6px;
 }
 
+.routesCards {
+  padding-bottom: 6px;
+}
+
 .routesTitle {
   font-size: 13px;
   font-weight: 800;
@@ -395,7 +426,6 @@
   opacity: 0.8;
 
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
 }
 
@@ -528,4 +558,518 @@
   .timeInput {
     width: 100%;
   }
+}
+
+
+/* Route cards */
+.actionsBar {
+  display: flex;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.hiddenPanel {
+  display: none;
+}
+
+.routesTitle {
+  margin: 0;
+  font-weight: 700;
+  font-size: 15px;
+  color: rgba(0, 0, 0, 0.86);
+}
+
+
+.routesTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 12px 2px 10px;
+}
+
+.routesSpinnerSm {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 0, 0, 0.18);
+  border-top-color: rgba(0, 0, 0, 0.55);
+  animation: rrSpin 900ms linear infinite;
+}
+
+.routesLoading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 44px 16px;
+  min-height: 160px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.routesSpinner {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 4px solid rgba(0, 0, 0, 0.14);
+  border-top-color: rgba(0, 0, 0, 0.55);
+  animation: rrSpin 900ms linear infinite;
+}
+
+.routesLoadingText {
+  font-size: 18px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.70);
+}
+
+@keyframes rrSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.routeCardsList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.routeCard {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+  text-align: left;
+}
+
+.routeCard:hover {
+  border-color: rgba(0, 0, 0, 0.22);
+}
+
+.routeCardSelected {
+  border-color: rgba(26, 115, 232, 0.35);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  background: rgba(26, 115, 232, 0.04);
+}
+
+.routeAccent {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: 6px;
+  border-radius: 16px 0 0 16px;
+  background: rgba(0, 0, 0, 0.10);
+}
+
+.routeAccentSelected {
+  background: var(--primary);
+}
+
+.routeCardInner {
+  padding: 12px 14px 12px 16px;
+}
+
+.routeTopRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+
+.routeTopLeft {
+  flex: 1;
+  min-width: 0;
+}
+.routeDepArr {
+  font-size: 17px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.88);
+}
+
+.routeSummaryLine {
+  margin-top: 3px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.56);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.routeTopRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.routeDurationBig {
+  font-size: 17px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.9);
+  line-height: 1.1;
+}
+
+.routeDistanceSmall {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(0, 0, 0, 0.56);
+}
+
+.modeStrip {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.detailsModeStrip {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.transitChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  max-width: 100%;
+}
+
+.chipGlyph {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chipLabel {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+
+.modeDot {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  color: rgba(0, 0, 0, 0.78);
+}
+
+.itinBar {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  overflow: hidden;
+  min-width: 0;
+
+}
+
+.itinSeg {
+  position: relative;
+  min-width: 0;
+  height: 30px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  flex-basis: 0px;
+  flex-shrink: 1;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+
+.itinGlyph {
+  font-size: 14px;
+  line-height: 1;
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.itinText {
+  font-size: 12px;
+  font-weight: 800;
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
+
+.routeExpanded {
+  margin-top: 10px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  padding-top: 10px;
+}
+
+.previewTitle {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.56);
+}
+
+.previewList {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.previewRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.86);
+}
+
+.previewKey {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewVal {
+  flex-shrink: 0;
+  color: rgba(0, 0, 0, 0.60);
+  font-weight: 800;
+}
+
+.detailsRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.detailsBtn {
+  border: 1px solid rgba(26, 115, 232, 0.25);
+  background: rgba(26, 115, 232, 0.10);
+  color: rgba(0, 0, 0, 0.86);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.detailsBtn:hover {
+  background: rgba(26, 115, 232, 0.16);
+}
+
+.detailsPane {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.detailsHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  padding: 12px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+
+.detailsStickyStack {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  padding: 12px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.detailsHeaderInStack {
+  position: static !important;
+  top: auto !important;
+  z-index: auto !important;
+  padding: 0 !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  border-bottom: 0 !important;
+}
+
+.detailsODCard {
+  border: 1px solid rgba(0, 0, 0, 0.10);
+  margin-top: -12.5px;
+  margin-left: -12.5px;
+  margin-right: -12.5px;
+  margin-bottom: 10px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.03);
+  padding: 10px 12px;
+}
+
+.detailsODCard .detailsOD {
+  padding-left: 0;
+}
+.detailsHeaderTop {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.backBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(0, 0, 0, 0.04);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.backBtn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+
+.detailsTopRow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.detailsTimes {
+  font-size: 17px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.86);
+}
+
+.detailsDuration {
+  font-size: 17px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.90);
+}
+
+.detailsOD {
+  /* Indent to align under the times/duration block (past the back button). */
+  padding-left: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.detailsODRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.detailsODLabel {
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(0, 0, 0, 0.54);
+  flex: 0 0 auto;
+  width: 38px;
+}
+
+.detailsODText {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.78);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+.itinLabel {
+  font-size: 12px;
+  font-weight: 900;
+  max-width: 60px;
+	min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.itinLabelMeasure {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  visibility: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.itinTextMeasure {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  visibility: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+
+.previewListText {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.previewLine {
+  font-size: 13px;
+  color: rgba(0, 0, 0, 0.86);
+  line-height: 1.25;  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+}
+
+.detailsItinBar {
+  margin-top: 0;
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  overflow: hidden;
+  min-width: 0;
+
 }
