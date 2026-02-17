@@ -24,6 +24,8 @@
 
   /* needs to be visible for the nub to stick out */
   overflow: visible;
+
+  transition: width 160ms ease, min-width 160ms ease, max-width 160ms ease, flex-basis 160ms ease;
 }
 
 .sidebarBody {
@@ -111,6 +113,10 @@
 /* ---- Collapsed state ---- */
 .sidebarCollapsed {
   --sidebar-w: 10px;
+  width: 10px;
+  min-width: 10px;
+  max-width: 10px;
+  flex: 0 0 10px;
 }
 
 .sidebarCollapsed .sidebarHeader {
@@ -154,6 +160,8 @@
   /* defeat any global button styles */
   font-size: 0;
   line-height: 0;
+  touch-action: manipulation;
+  pointer-events: auto;
 }
 
 .collapseNub:hover {
@@ -642,4 +650,3 @@
 .saveModalActions .secondaryBtn {
   height: 38px;
 }
-

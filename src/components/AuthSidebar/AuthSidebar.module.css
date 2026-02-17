@@ -236,9 +236,20 @@
   color: #fff;
 }
 
+.saveActionPrimaryInvalid {
+  background: rgba(0, 0, 0, 0.06);
+  color: rgba(0, 0, 0, 0.44);
+  border-color: rgba(0, 0, 0, 0.12);
+  cursor: not-allowed;
+}
+
 .saveActionSecondary:hover,
 .saveActionPrimary:hover {
   transform: translateY(-1px);
+}
+
+.saveActionPrimaryInvalid:hover {
+  transform: none;
 }
 
 .profileContent {
@@ -256,6 +267,10 @@
 
 .sidebarCollapsed {
   --sidebar-w: 10px;
+  width: 10px;
+  min-width: 10px;
+  max-width: 10px;
+  flex: 0 0 10px;
 }
 
 .sidebarCollapsed .sidebarBody {
@@ -286,6 +301,8 @@
 
   font-size: 0;
   line-height: 0;
+  touch-action: manipulation;
+  pointer-events: auto;
 }
 
 .collapseNub:hover {
@@ -306,6 +323,12 @@
 
 @media (max-width: 900px) {
   .sidebar {
-    --sidebar-w: 250px;
+    --sidebar-w: clamp(200px, 44vw, 300px);
+  }
+}
+
+@media (max-width: 640px) {
+  .sidebar {
+    --sidebar-w: clamp(140px, 46vw, 220px);
   }
 }

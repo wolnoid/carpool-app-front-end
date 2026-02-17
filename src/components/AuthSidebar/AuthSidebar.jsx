@@ -57,10 +57,8 @@ const AuthSidebar = () => {
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState('');
   const [saveDesc, setSaveDesc] = useState('');
-  const [saveAutoName, setSaveAutoName] = useState('');
   const [saveError, setSaveError] = useState(null);
   const [saveSaving, setSaveSaving] = useState(false);
-  const [activeSavedId, setActiveSavedId] = useState(null);
   const [savedListKey, setSavedListKey] = useState(0);
 
   useEffect(() => {
@@ -113,18 +111,6 @@ const AuthSidebar = () => {
   const showSignUp = !user && view === 'signup';
   const showAuthForm = showSignIn || showSignUp;
 
-  const readSavedIdFromHash = useCallback(() => {
-    try {
-      const hash = typeof window !== 'undefined' ? window.location.hash || '' : '';
-      const params = new URLSearchParams(hash.replace(/^#/, ''));
-      const raw = params.get('sid');
-      const n = raw ? Number(raw) : null;
-      return Number.isFinite(n) ? n : null;
-    } catch {
-      return null;
-    }
-  }, []);
-
   const getPickerLabel = useCallback((selector, fallback = '') => {
     try {
       if (typeof document === 'undefined') return fallback;
@@ -134,25 +120,6 @@ const AuthSidebar = () => {
     } catch {
       return fallback;
     }
-  }, []);
-
-  const shortAddressLabel = useCallback((rawLabel, fallback = '') => {
-    const raw = String(rawLabel || fallback || '').trim();
-    if (!raw) return '';
-    const [head] = raw.split(',');
-    const trimmed = String(head || '').trim();
-    return trimmed || raw;
-  }, []);
-
-  const formatModeLabel = useCallback((combo) => {
-    const raw = String(combo || ROUTE_COMBO.TRANSIT).trim();
-    if (!raw) return 'transit';
-    return raw
-      .toLowerCase()
-      .split(/[_+]+/)
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join(' + ');
   }, []);
 
   const getRouteState = useCallback(() => {
@@ -184,20 +151,13 @@ const AuthSidebar = () => {
   }, []);
 
   const handleSaveCurrentRoute = useCallback(() => {
-    const originFull = getPickerLabel('gmpx-place-picker[placeholder="Choose origin"]', 'Current location');
-    const destinationFull = getPickerLabel('gmpx-place-picker[placeholder="Choose destination"]', 'Destination');
     const routeState = getRouteState();
-    const modeLabel = formatModeLabel(routeState?.parsed?.mode);
-
-    const autoName = `${shortAddressLabel(originFull, 'Current location')} → ${shortAddressLabel(destinationFull, 'Destination')} by ${modeLabel}`;
-    setSaveAutoName(autoName);
-    setSaveName(autoName);
+    setSaveName('');
     setSaveDesc('');
     setSaveSaving(false);
     setSaveError(routeState ? null : 'Get directions first');
-    setActiveSavedId(readSavedIdFromHash());
     setSaveOpen(true);
-  }, [formatModeLabel, getPickerLabel, getRouteState, readSavedIdFromHash, shortAddressLabel]);
+  }, [getRouteState]);
 
   const cancelSave = useCallback(() => {
     setSaveOpen(false);
@@ -206,7 +166,7 @@ const AuthSidebar = () => {
   }, []);
 
   const submitSave = useCallback(
-    async ({ update = false } = {}) => {
+    async () => {
       if (!user) return;
       setSaveSaving(true);
       setSaveError(null);
@@ -214,6 +174,8 @@ const AuthSidebar = () => {
       try {
         const routeState = getRouteState();
         if (!routeState?.search) throw new Error('Get directions first');
+        const nextName = String(saveName || '').trim();
+        if (!nextName) throw new Error('Route name is required');
 
         const origin_label = getPickerLabel(
           'gmpx-place-picker[placeholder="Choose origin"]',
@@ -225,7 +187,7 @@ const AuthSidebar = () => {
         );
 
         const payload = {
-          name: String(saveName || saveAutoName || 'Saved directions').trim(),
+          name: nextName,
           description: saveDesc,
           origin_label,
           destination_label,
@@ -233,16 +195,8 @@ const AuthSidebar = () => {
           search: routeState.search,
         };
 
-        if (update) {
-          const sid = activeSavedId;
-          if (!sid) throw new Error('No saved direction selected to update');
-          const updated = await savedDirectionsService.update(sid, payload);
-          persistHashSid(updated?.id ?? sid, routeState.search);
-        } else {
-          const created = await savedDirectionsService.create(payload);
-          persistHashSid(created?.id, routeState.search);
-          setActiveSavedId(created?.id ?? null);
-        }
+        const created = await savedDirectionsService.create(payload);
+        persistHashSid(created?.id, routeState.search);
 
         setSaveOpen(false);
         setSavedListKey((prev) => prev + 1);
@@ -252,7 +206,7 @@ const AuthSidebar = () => {
         setSaveSaving(false);
       }
     },
-    [activeSavedId, getPickerLabel, getRouteState, persistHashSid, saveAutoName, saveDesc, saveName, user]
+    [getPickerLabel, getRouteState, persistHashSid, saveDesc, saveName, user]
   );
 
   return (
@@ -289,8 +243,9 @@ const AuthSidebar = () => {
                     className={styles.saveInput}
                     value={saveName}
                     onChange={(e) => setSaveName(e.target.value)}
-                    placeholder={saveAutoName || 'Saved directions'}
+                    placeholder='Required'
                     disabled={saveSaving}
+                    required
                   />
                 </label>
 
@@ -319,22 +274,12 @@ const AuthSidebar = () => {
                   </button>
                   <button
                     type='button'
-                    className={styles.saveActionPrimary}
-                    onClick={() => submitSave({ update: false })}
-                    disabled={saveSaving}
+                    className={`${styles.saveActionPrimary} ${!saveName.trim() ? styles.saveActionPrimaryInvalid : ''}`}
+                    onClick={submitSave}
+                    disabled={saveSaving || !saveName.trim()}
                   >
                     {saveSaving ? 'Saving…' : 'Save'}
                   </button>
-                  {Boolean(activeSavedId) && (
-                    <button
-                      type='button'
-                      className={styles.saveActionPrimary}
-                      onClick={() => submitSave({ update: true })}
-                      disabled={saveSaving}
-                    >
-                      {saveSaving ? 'Saving…' : 'Update'}
-                    </button>
-                  )}
                 </div>
               </div>
             )}

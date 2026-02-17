@@ -5,28 +5,30 @@ import styles from "./SavedDirections.module.css";
 import { UserContext } from "../../contexts/UserContext";
 import * as savedDirectionsService from "../../services/savedDirectionsService";
 import { requestDirectionsSidebarExpand } from "../../utils/directionsSidebarState";
+import { ROUTE_COMBO } from "../../routing/routeCombos";
+import { getStartIconUrl, getEndIconUrl } from "../../maps/markerIconSvgs";
 
-function safeFmtDate(value) {
-  try {
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "";
-    return d.toLocaleDateString();
-  } catch {
-    return "";
-  }
+const MODE_OPTIONS = [
+  { value: ROUTE_COMBO.TRANSIT, label: "transit" },
+  { value: ROUTE_COMBO.TRANSIT_BIKE, label: "transit + bike" },
+  { value: ROUTE_COMBO.BIKE, label: "bike" },
+  { value: ROUTE_COMBO.TRANSIT_SKATE, label: "transit + skate" },
+  { value: ROUTE_COMBO.SKATE, label: "skate" },
+];
+
+const MODE_LABEL_BY_VALUE = MODE_OPTIONS.reduce((acc, opt) => {
+  acc[opt.value] = opt.label;
+  return acc;
+}, {});
+
+function normalizeMode(mode) {
+  const raw = String(mode || "").trim().toUpperCase();
+  return MODE_LABEL_BY_VALUE[raw] ? raw : ROUTE_COMBO.TRANSIT;
 }
 
 function formatMode(mode) {
-  const raw = typeof mode === "string" ? mode.trim() : "";
-  if (!raw) return "—";
-
-  const parts = raw
-    .toLowerCase()
-    .split(/[_+]+/)
-    .map((token) => token.trim())
-    .filter(Boolean);
-
-  return parts.length ? parts.join(" + ") : "—";
+  const normalized = normalizeMode(mode);
+  return MODE_LABEL_BY_VALUE[normalized] || "—";
 }
 
 function buildShareUrl(search) {
@@ -38,6 +40,8 @@ function buildShareUrl(search) {
 export default function SavedDirections({ embedded = false, showHeader = true }) {
   const { user } = useContext(UserContext);
   const navigate = useNavigate();
+  const startIconUrl = useMemo(() => getStartIconUrl(), []);
+  const endIconUrl = useMemo(() => getEndIconUrl(), []);
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -46,6 +50,7 @@ export default function SavedDirections({ embedded = false, showHeader = true })
   const [editing, setEditing] = useState(null); // item
   const [editName, setEditName] = useState("");
   const [editDesc, setEditDesc] = useState("");
+  const [editMode, setEditMode] = useState(ROUTE_COMBO.TRANSIT);
   const [editSaving, setEditSaving] = useState(false);
 
   const [copiedId, setCopiedId] = useState(null);
@@ -116,24 +121,35 @@ export default function SavedDirections({ embedded = false, showHeader = true })
     setEditing(item);
     setEditName(item?.name ?? "");
     setEditDesc(item?.description ?? "");
+    setEditMode(normalizeMode(item?.mode));
   }
 
   function cancelEdit() {
     setEditing(null);
     setEditName("");
     setEditDesc("");
+    setEditMode(ROUTE_COMBO.TRANSIT);
     setEditSaving(false);
   }
 
   async function submitEdit() {
     if (!editing?.id) return;
+    const nextName = String(editName || "").trim();
+    if (!nextName) {
+      window.alert("Route name is required");
+      return;
+    }
     setEditSaving(true);
     try {
+      const mode = normalizeMode(editMode);
       const updated = await savedDirectionsService.update(editing.id, {
-        name: editName,
+        name: nextName,
         description: editDesc,
+        mode,
       });
-      setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+      setItems((prev) =>
+        prev.map((x) => (x.id === editing.id ? { ...x, ...(updated || {}), mode: updated?.mode ?? mode } : x))
+      );
       cancelEdit();
     } catch (e) {
       window.alert(e?.message || "Failed to update");
@@ -185,18 +201,39 @@ export default function SavedDirections({ embedded = false, showHeader = true })
                 <div className={styles.topRow}>
                   <div className={styles.nameRow}>
                     <div className={styles.name}>{it.name || "(untitled)"}</div>
-                    <div className={styles.meta}>{safeFmtDate(it.updated_at || it.created_at)}</div>
                   </div>
-                  <span className={styles.badge}>{formatMode(it.mode)}</span>
+                  {editing?.id === it.id ? (
+                    <select
+                      className={styles.modeSelect}
+                      value={editMode}
+                      onChange={(e) => setEditMode(e.target.value)}
+                      disabled={editSaving}
+                      aria-label="Route mode"
+                    >
+                      {MODE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className={styles.badge}>{formatMode(it.mode)}</span>
+                  )}
                 </div>
                 {!!it.description && <div className={styles.desc}>{it.description}</div>}
                 <div className={styles.routeLine}>
-                  <span
-                    className={styles.od}
-                    title={`${(it.origin_label || "Current location").trim()} → ${(it.destination_label || "").trim()}`}
-                  >
-                    {(it.origin_label || "Current location").trim()} → {(it.destination_label || "").trim()}
-                  </span>
+                  <div className={styles.odRow}>
+                    <img className={`${styles.odIcon} ${styles.odIconStart}`} src={startIconUrl} alt="" aria-hidden="true" />
+                    <span className={styles.odText} title={(it.origin_label || "Current location").trim()}>
+                      {(it.origin_label || "Current location").trim()}
+                    </span>
+                  </div>
+                  <div className={styles.odRow}>
+                    <img className={`${styles.odIcon} ${styles.odIconEnd}`} src={endIconUrl} alt="" aria-hidden="true" />
+                    <span className={styles.odText} title={(it.destination_label || "").trim() || "—"}>
+                      {(it.destination_label || "").trim() || "—"}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -208,7 +245,8 @@ export default function SavedDirections({ embedded = false, showHeader = true })
                       className={styles.input}
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
-                      placeholder="Name"
+                      placeholder="Required"
+                      required
                     />
                   </label>
 
@@ -224,32 +262,32 @@ export default function SavedDirections({ embedded = false, showHeader = true })
                   </label>
 
                   <div className={styles.inlineEditorActions}>
+                    <button
+                      className={`${styles.btnPrimary} ${!editName.trim() ? styles.btnPrimaryInvalid : ""}`}
+                      onClick={submitEdit}
+                      type="button"
+                      disabled={editSaving || !editName.trim()}
+                    >
+                      {editSaving ? "Saving…" : "Save"}
+                    </button>
                     <button className={styles.btn} onClick={cancelEdit} type="button" disabled={editSaving}>
                       Cancel
                     </button>
-                    <button
-                      className={styles.btnPrimary}
-                      onClick={submitEdit}
-                      type="button"
-                      disabled={editSaving}
-                    >
-                      {editSaving ? "Saving…" : "Save"}
+                    <button className={styles.btnDanger} onClick={() => handleDelete(it.id)} type="button" disabled={editSaving}>
+                      Delete
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className={styles.actions}>
                   <button className={styles.btnPrimary} onClick={() => handleOpen(it)} type="button">
-                    Open
-                  </button>
-                  <button className={styles.btn} onClick={() => beginEdit(it)} type="button">
-                    Edit
+                    View
                   </button>
                   <button className={styles.btn} onClick={() => handleCopyLink(it)} type="button">
                     {copiedId === it.id ? "Copied" : "Share"}
                   </button>
-                  <button className={styles.btnDanger} onClick={() => handleDelete(it.id)} type="button">
-                    Delete
+                  <button className={styles.btn} onClick={() => beginEdit(it)} type="button">
+                    Edit
                   </button>
                 </div>
               )}

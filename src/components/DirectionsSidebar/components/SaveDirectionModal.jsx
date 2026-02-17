@@ -7,13 +7,10 @@ export function SaveDirectionModal({
   setName,
   description,
   setDescription,
-  autoName,
-  canUpdate,
   saving,
   error,
   onCancel,
   onSaveNew,
-  onUpdate,
 }) {
   if (!open) return null;
 
@@ -28,8 +25,9 @@ export function SaveDirectionModal({
             className={styles.saveModalInput}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={autoName || "Saved directions"}
+            placeholder="Required"
             disabled={saving}
+            required
           />
         </label>
 
@@ -56,23 +54,11 @@ export function SaveDirectionModal({
             className={styles.primaryBtn}
             onClick={onSaveNew}
             type="button"
-            disabled={saving}
+            disabled={saving || !String(name || "").trim()}
             title="Save as a new bookmark"
           >
             {saving ? "Saving…" : "Save"}
           </button>
-
-          {canUpdate && (
-            <button
-              className={styles.primaryBtn}
-              onClick={onUpdate}
-              type="button"
-              disabled={saving}
-              title="Update this saved direction"
-            >
-              {saving ? "Saving…" : "Update"}
-            </button>
-          )}
         </div>
       </div>
     </div>

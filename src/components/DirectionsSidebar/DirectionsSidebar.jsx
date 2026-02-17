@@ -5,7 +5,7 @@ import { placeToLatLng } from "../../maps/directionsUtils";
 import { getPickerText, closePickerSuggestions } from "../../maps/placePicker";
 import { usePlacePickerChange } from "../../hooks/usePlacePickerChange";
 
-import { ROUTE_COMBO, isTransitOn, isBikeOn, isSkateOn, nextCombo } from "../../routing/routeCombos";
+import { isTransitOn, isBikeOn, isSkateOn, nextCombo } from "../../routing/routeCombos";
 import { buildRoutingSearch, parseRoutingSearch } from "../../routing/urlState";
 import { UserContext } from "../../contexts/UserContext";
 import * as savedDirectionsService from "../../services/savedDirectionsService";
@@ -188,22 +188,8 @@ export default function DirectionsSidebar({
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [saveDesc, setSaveDesc] = useState("");
-  const [saveAutoName, setSaveAutoName] = useState("");
   const [saveError, setSaveError] = useState(null);
   const [saveSaving, setSaveSaving] = useState(false);
-  const [activeSavedId, setActiveSavedId] = useState(null);
-
-  const readSavedIdFromHash = useCallback(() => {
-    try {
-      const hash = typeof window !== "undefined" ? window.location.hash || "" : "";
-      const params = new URLSearchParams(hash.replace(/^#/, ""));
-      const raw = params.get("sid");
-      const n = raw ? Number(raw) : null;
-      return Number.isFinite(n) ? n : null;
-    } catch {
-      return null;
-    }
-  }, []);
 
   const buildBookmarkSearch = useCallback(() => {
     const parsed = typeof window !== "undefined" ? parseRoutingSearch(window.location.search) : null;
@@ -238,43 +224,14 @@ export default function DirectionsSidebar({
     }
   }, []);
 
-  const shortAddressLabel = useCallback((rawLabel, fallback) => {
-    const raw = String(rawLabel || fallback || "").trim();
-    if (!raw) return "";
-    const [head] = raw.split(",");
-    const trimmed = String(head || "").trim();
-    return trimmed || raw;
-  }, []);
-
-  const formatModeLabel = useCallback((combo) => {
-    const raw = String(combo || ROUTE_COMBO.TRANSIT).trim();
-    if (!raw) return "transit";
-    return raw
-      .toLowerCase()
-      .split(/[_+]+/)
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join(" + ");
-  }, []);
-
-  const computeAutoName = useCallback(() => {
-    const oText = shortAddressLabel(getPickerLabel(originRef.current), "Current location");
-    const dText = shortAddressLabel(getPickerLabel(destRef.current), "Destination");
-    const modeText = formatModeLabel(routeCombo);
-    return `${oText} → ${dText} by ${modeText}`;
-  }, [getPickerLabel, shortAddressLabel, formatModeLabel, originRef, destRef, routeCombo]);
-
   const openSave = useCallback(() => {
     if (!user) return;
-    const autoName = computeAutoName();
-    setSaveAutoName(autoName);
-    setSaveName(autoName);
+    setSaveName("");
     setSaveDesc("");
     setSaveError(null);
     setSaveSaving(false);
-    setActiveSavedId(readSavedIdFromHash());
     setSaveOpen(true);
-  }, [user, computeAutoName, readSavedIdFromHash]);
+  }, [user]);
 
   const closeSave = useCallback(() => {
     setSaveOpen(false);
@@ -298,19 +255,21 @@ export default function DirectionsSidebar({
   }, []);
 
   const doSave = useCallback(
-    async ({ update = false } = {}) => {
+    async () => {
       if (!user) return;
       setSaveSaving(true);
       setSaveError(null);
 
       try {
+        const nextName = String(saveName || "").trim();
+        if (!nextName) throw new Error("Route name is required");
         const origin_label = getPickerLabel(originRef.current) || "Current location";
         const destination_label = getPickerLabel(destRef.current) || "";
         const search = buildBookmarkSearch();
         if (!search) throw new Error("Missing origin or destination");
 
         const payload = {
-          name: saveName,
+          name: nextName,
           description: saveDesc,
           origin_label,
           destination_label,
@@ -318,16 +277,8 @@ export default function DirectionsSidebar({
           search,
         };
 
-        if (update) {
-          const sid = activeSavedId;
-          if (!sid) throw new Error("No saved direction selected to update");
-          const updated = await savedDirectionsService.update(sid, payload);
-          persistHashSid(updated?.id ?? sid, search);
-        } else {
-          const created = await savedDirectionsService.create(payload);
-          persistHashSid(created?.id, search);
-          setActiveSavedId(created?.id ?? null);
-        }
+        const created = await savedDirectionsService.create(payload);
+        persistHashSid(created?.id, search);
 
         setSaveOpen(false);
       } catch (e) {
@@ -345,7 +296,6 @@ export default function DirectionsSidebar({
       saveName,
       saveDesc,
       routeCombo,
-      activeSavedId,
       persistHashSid,
     ]
   );
@@ -519,13 +469,10 @@ export default function DirectionsSidebar({
         setName={setSaveName}
         description={saveDesc}
         setDescription={setSaveDesc}
-        autoName={saveAutoName}
-        canUpdate={Boolean(activeSavedId)}
         saving={saveSaving}
         error={saveError}
         onCancel={closeSave}
-        onSaveNew={() => doSave({ update: false })}
-        onUpdate={() => doSave({ update: true })}
+        onSaveNew={doSave}
       />
     </>
   );
