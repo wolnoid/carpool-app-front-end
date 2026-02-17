@@ -2,11 +2,10 @@ export function createMainRendererTools({ rendererRef, panelRef, map }) {
   function clearRendererDirections(dr) {
     if (!dr) return;
 
-    // Best-effort: clear any retained directions payload before reattaching.
-    // Some Maps JS builds keep rendering transit shields when map is reattached
-    // unless the internal directions object is explicitly nulled.
+    // IMPORTANT: Some Maps JS builds throw `InvalidValueError: setDirections: not an Object`
+    // when clearing with null. Always clear with an object-shaped stub instead.
     try {
-      dr.set?.("directions", null);
+      if (typeof dr.setRouteIndex === "function") dr.setRouteIndex(0);
     } catch {
       // ignore
     }
@@ -16,13 +15,13 @@ export function createMainRendererTools({ rendererRef, panelRef, map }) {
       // ignore
     }
     try {
-      if (typeof dr.setRouteIndex === "function") dr.setRouteIndex(0);
+      if (typeof dr.setDirections === "function") dr.setDirections({ routes: [] });
     } catch {
       // ignore
     }
+    // Best-effort: also clear the underlying MVCObject prop if supported.
     try {
-      // `setDirections(null)` can throw on some builds; keep as guarded fallback only.
-      dr.setDirections?.(null);
+      dr.set?.("directions", { routes: [] });
     } catch {
       // ignore
     }
@@ -32,19 +31,22 @@ export function createMainRendererTools({ rendererRef, panelRef, map }) {
     const dr = rendererRef.current;
     if (!dr) return;
 
-    // NOTE: Newer Maps JS builds can throw if setDirections is called with null
-    // or a stub object. Clearing by detaching/reattaching avoids InvalidValueError
-    // and the downstream 'travelMode' crashes.
+    // Detach first. This is the safest way to reset renderer state across Maps JS builds.
     try {
       dr.setPanel?.(null);
     } catch {
       // ignore
     }
-    clearRendererDirections(dr);
     try {
       dr.setMap?.(null);
     } catch {
       // ignore
+    }
+
+    // Only clear directions if we're going to keep using this renderer instance.
+    // During unmount we often detach and throw the instance away.
+    if (reattach) {
+      clearRendererDirections(dr);
     }
 
     if (reattach) {

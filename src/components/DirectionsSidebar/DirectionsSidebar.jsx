@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { getStartIconUrl, getEndIconUrl } from "../../maps/markerIconSvgs";
 import { placeToLatLng } from "../../maps/directionsUtils";
@@ -6,8 +6,12 @@ import { getPickerText, closePickerSuggestions } from "../../maps/placePicker";
 import { usePlacePickerChange } from "../../hooks/usePlacePickerChange";
 
 import { isTransitOn, isBikeOn, isSkateOn, nextCombo } from "../../routing/routeCombos";
+import { buildRoutingSearch, parseRoutingSearch } from "../../routing/urlState";
+import { UserContext } from "../../contexts/UserContext";
+import * as savedDirectionsService from "../../services/savedDirectionsService";
 
 import { SidebarView } from "./components/SidebarView";
+import { SaveDirectionModal } from "./components/SaveDirectionModal";
 import { useSidebarPickers } from "./hooks/useSidebarPickers";
 import { buildRouteDetailsModel } from "./model/routeDetailsModel";
 import { buildSidebarSegments } from "./utils/sidebarSegments";
@@ -54,6 +58,8 @@ export default function DirectionsSidebar({
   onZoomToRoute,
   onZoomToAllRoutes,
 }) {
+
+  const { user } = useContext(UserContext);
 
   const {
     originRef,
@@ -167,6 +173,147 @@ export default function DirectionsSidebar({
 
 
   const [detailsMode, setDetailsMode] = useState("NONE");
+
+  // ---- Save directions (bookmark) ----
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [saveDesc, setSaveDesc] = useState("");
+  const [saveAutoName, setSaveAutoName] = useState("");
+  const [saveError, setSaveError] = useState(null);
+  const [saveSaving, setSaveSaving] = useState(false);
+  const [activeSavedId, setActiveSavedId] = useState(null);
+
+  const readSavedIdFromHash = useCallback(() => {
+    try {
+      const hash = typeof window !== "undefined" ? window.location.hash || "" : "";
+      const params = new URLSearchParams(hash.replace(/^#/, ""));
+      const raw = params.get("sid");
+      const n = raw ? Number(raw) : null;
+      return Number.isFinite(n) ? n : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const buildBookmarkSearch = useCallback(() => {
+    const parsed = typeof window !== "undefined" ? parseRoutingSearch(window.location.search) : null;
+    const via = parsed?.via ?? [];
+
+    const o = origin ?? userLoc ?? null;
+    const d = destination ?? null;
+
+    const when =
+      timeKind === "DEPART_AT" || timeKind === "ARRIVE_BY"
+        ? { kind: timeKind, date: timeValue }
+        : { kind: "NOW", date: null };
+
+    return buildRoutingSearch(
+      {
+        origin: o,
+        destination: d,
+        mode: routeCombo,
+        via,
+        when,
+        hillMaxDeg,
+      },
+      { includeWhenNow: true }
+    );
+  }, [origin, userLoc, destination, routeCombo, timeKind, timeValue, hillMaxDeg]);
+
+  const getPickerLabel = useCallback((pickerEl) => {
+    try {
+      return (getPickerText(pickerEl) || "").trim();
+    } catch {
+      return "";
+    }
+  }, []);
+
+  const computeAutoName = useCallback(() => {
+    const oText = getPickerLabel(originRef.current) || "Current location";
+    const dText = getPickerLabel(destRef.current) || "Destination";
+    return `${oText} → ${dText}`;
+  }, [getPickerLabel, originRef, destRef]);
+
+  const canSave = Boolean(user) && Boolean(destination) && Boolean(origin ?? userLoc);
+
+  const openSave = useCallback(() => {
+    if (!user) return;
+    const autoName = computeAutoName();
+    setSaveAutoName(autoName);
+    setSaveName(autoName);
+    setSaveDesc("");
+    setSaveError(null);
+    setSaveSaving(false);
+    setActiveSavedId(readSavedIdFromHash());
+    setSaveOpen(true);
+  }, [user, computeAutoName, readSavedIdFromHash]);
+
+  const closeSave = useCallback(() => {
+    setSaveOpen(false);
+    setSaveError(null);
+    setSaveSaving(false);
+  }, []);
+
+  const persistHashSid = useCallback((sid, searchOverride) => {
+    if (typeof window === "undefined") return;
+    const path = window.location.pathname || "/";
+    const search = searchOverride ?? window.location.search ?? "";
+    const next = `${path}${search}${sid ? `#sid=${sid}` : ""}`;
+    window.history.replaceState(null, "", next);
+  }, []);
+
+  const doSave = useCallback(
+    async ({ update = false } = {}) => {
+      if (!user) return;
+      setSaveSaving(true);
+      setSaveError(null);
+
+      try {
+        const origin_label = getPickerLabel(originRef.current) || "Current location";
+        const destination_label = getPickerLabel(destRef.current) || "";
+        const search = buildBookmarkSearch();
+        if (!search) throw new Error("Missing origin or destination");
+
+        const payload = {
+          name: saveName,
+          description: saveDesc,
+          origin_label,
+          destination_label,
+          mode: routeCombo,
+          search,
+        };
+
+        if (update) {
+          const sid = activeSavedId;
+          if (!sid) throw new Error("No saved direction selected to update");
+          const updated = await savedDirectionsService.update(sid, payload);
+          persistHashSid(updated?.id ?? sid, search);
+        } else {
+          const created = await savedDirectionsService.create(payload);
+          persistHashSid(created?.id, search);
+          setActiveSavedId(created?.id ?? null);
+        }
+
+        setSaveOpen(false);
+      } catch (e) {
+        setSaveError(e?.message || "Failed to save");
+      } finally {
+        setSaveSaving(false);
+      }
+    },
+    [
+      user,
+      getPickerLabel,
+      originRef,
+      destRef,
+      buildBookmarkSearch,
+      saveName,
+      saveDesc,
+      routeCombo,
+      activeSavedId,
+      persistHashSid,
+    ]
+  );
 
   const prevDetailsModeRef = useRef("NONE");
   useEffect(() => {
@@ -286,7 +433,8 @@ export default function DirectionsSidebar({
 
 
   return (
-    <SidebarView
+    <>
+      <SidebarView
       collapsed={collapsed}
       setCollapsed={setCollapsed}
       detailsMode={detailsMode}
@@ -329,6 +477,24 @@ export default function DirectionsSidebar({
       detailsItinRef={detailsItinRef}
       detailsItinSegs={detailsItinSegs}
       pickerSnapshotRef={pickerSnapshotRef}
+      showSaveButton={Boolean(user)}
+      saveDisabled={!canSave}
+      onOpenSaveModal={openSave}
     />
+      <SaveDirectionModal
+        open={saveOpen}
+        name={saveName}
+        setName={setSaveName}
+        description={saveDesc}
+        setDescription={setSaveDesc}
+        autoName={saveAutoName}
+        canUpdate={Boolean(activeSavedId)}
+        saving={saveSaving}
+        error={saveError}
+        onCancel={closeSave}
+        onSaveNew={() => doSave({ update: false })}
+        onUpdate={() => doSave({ update: true })}
+      />
+    </>
   );
 }

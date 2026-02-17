@@ -29,7 +29,7 @@ const NavBar = () => {
       <div className={styles.right}>
         {user ? (
           <ul>
-            <li><Link to='/'>My Profile</Link></li>
+            <li><Link to='/saved'>My Profile</Link></li>
             <li><Link to='/' onClick={handleSignOut}>Sign Out</Link></li>
           </ul>
         ) : (

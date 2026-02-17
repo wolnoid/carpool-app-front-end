@@ -1,0 +1,191 @@
+.page {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 18px 16px 28px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.title {
+  margin: 0;
+}
+
+.subtitle {
+  opacity: 0.6;
+  font-size: 14px;
+  margin-top: 4px;
+}
+
+.counter {
+  font-weight: 700;
+  opacity: 0.7;
+}
+
+.stateCard {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: -1px 5px 19px -10px rgba(0, 0, 0, 0.25);
+}
+
+.stateTitle {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.stateText {
+  opacity: 0.7;
+  margin-bottom: 12px;
+}
+
+.list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: -1px 5px 19px -12px rgba(0, 0, 0, 0.25);
+}
+
+.cardTop {
+  display: grid;
+  gap: 6px;
+}
+
+.nameRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.name {
+  font-weight: 800;
+  font-size: 16px;
+}
+
+.meta {
+  font-size: 12px;
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.desc {
+  font-size: 14px;
+  opacity: 0.75;
+}
+
+.routeLine {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.od {
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn,
+.btnPrimary,
+.btnDanger {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 0.8);
+  font-weight: 800;
+  font-family: inherit;
+}
+
+.btnPrimary {
+  background: var(--primary);
+  color: white;
+  border-color: rgba(0, 0, 0, 0.16);
+}
+
+.btnDanger {
+  background: rgba(220, 0, 0, 0.08);
+  border-color: rgba(220, 0, 0, 0.25);
+}
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.modalCard {
+  width: 100%;
+  max-width: 520px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: -1px 12px 30px -18px rgba(0, 0, 0, 0.6);
+}
+
+.modalTitle {
+  font-weight: 900;
+  margin-bottom: 10px;
+}
+
+.label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 10px;
+}
+
+.input,
+.textarea {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  padding: 10px;
+  font: inherit;
+}
+
+.textarea {
+  resize: vertical;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
