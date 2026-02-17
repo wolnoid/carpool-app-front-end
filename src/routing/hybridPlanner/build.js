@@ -1,323 +1,24 @@
-// src/routing/hybridPlanner.js
-// Build hybrid itineraries (Transit + Bike/Skate) by:
-// 1) requesting TRANSIT alternatives
-// 2) replacing each WALKING step with the best micro-mobility route
-// 3) inserting explicit WAIT segments using transit step schedule times
-// 4) optionally adding direct (no-transit) options
-
-import { ROUTE_COMBO } from "./routeCombos";
-
-const GOOGLE_BLUE = "#1A73E8";
-// Non-selected routes: lighter Google-ish blue
-const ALT_GRAY = "#4285F4";
-
-function getTransitDetailsFromStep(step) {
-  return step?.transitDetails ?? step?.transit ?? step?.transit_details ?? null;
-}
-
-// Reference speeds (used only for skate time; bike/walk keep Google durations)
-const WALK_MPH = 3;
-const BIKE_MPH_ASSUMED = 10;
-const SKATE_MPH_FLAT = 6;
-const SKATE_MPH_DOWNHILL_CAP = 10;
-const SKATE_UPHILL_COLLAPSE_DEG = 8;
-
-const MPH_TO_MPS = 1609.344 / 3600;
-const WALK_MPS = WALK_MPH * MPH_TO_MPS;
-const SKATE_MPS_FLAT = SKATE_MPH_FLAT * MPH_TO_MPS;
-const SKATE_MPS_CAP = SKATE_MPH_DOWNHILL_CAP * MPH_TO_MPS;
-
-function fmtDurationSec(sec) {
-  const s = Math.max(0, Math.round(sec ?? 0));
-  const mins = Math.round(s / 60);
-  if (mins < 60) return `${mins} min`;
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  // If the duration is an exact hour, avoid a noisy "0 min" suffix.
-  if (m === 0) return `${h} hr`;
-  return `${h} hr ${m} min`;
-}
-
-function fmtTime(d) {
-  if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "";
-  try {
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "" + d;
-  }
-}
-
-function fmtDistanceMeters(m) {
-  if (!Number.isFinite(m)) return "";
-  const miles = m / 1609.344;
-  if (miles < 0.1) return `${Math.round(m)} m`;
-  if (miles < 10) return `${miles.toFixed(1)} mi`;
-  return `${Math.round(miles)} mi`;
-}
-
-function coerceDate(v) {
-  if (!v) return null;
-  try {
-    if (v instanceof Date) return v;
-    if (typeof v === "number") return new Date(v);
-    if (typeof v === "string") return new Date(v);
-    if (typeof v === "object" && "value" in v) return coerceDate(v.value);
-  } catch {
-    // ignore
-  }
-  return null;
-}
-
-function getLegDeparture(route, fallback) {
-  const v = route?.legs?.[0]?.departure_time;
-  return coerceDate(v) ?? fallback ?? null;
-}
-
-function getLegArrival(route, fallback) {
-  const legs = route?.legs ?? [];
-  const v = legs[legs.length - 1]?.arrival_time;
-  return coerceDate(v) ?? fallback ?? null;
-}
-
-async function routeOnce(ds, req) {
-  // Maps JS DirectionsService.route() returns a Promise in modern versions.
-  return await ds.route(req);
-}
-
-function latLngKey(ll) {
-  try {
-    const lat = typeof ll?.lat === "function" ? ll.lat() : ll?.lat;
-    const lng = typeof ll?.lng === "function" ? ll.lng() : ll?.lng;
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "";
-    return `${lat.toFixed(5)},${lng.toFixed(5)}`;
-  } catch {
-    return "";
-  }
-}
-
-function firstTransitStep(route) {
-  const steps = route?.legs?.[0]?.steps ?? [];
-  for (let i = 0; i < steps.length; i++) {
-    if (steps[i]?.travel_mode === "TRANSIT") return { step: steps[i], index: i, steps };
-  }
-  return { step: null, index: -1, steps };
-}
-
-function walkAccessSecondsToFirstTransit(route) {
-  const { index, steps } = firstTransitStep(route);
-  if (index <= 0) return 0;
-  let sec = 0;
-  for (let i = 0; i < index; i++) {
-    const st = steps[i];
-    // Usually WALKING, but be tolerant.
-    sec += st?.duration?.value ?? 0;
-  }
-  return sec;
-}
-
-function routeSignature(route) {
-  const steps = route?.legs?.[0]?.steps ?? [];
-  const parts = [];
-  for (const st of steps) {
-    if (st?.travel_mode !== "TRANSIT") continue;
-    const td = getTransitDetailsFromStep(st);
-    const line = td?.line;
-    const lineName = line?.short_name || line?.name || "";
-    const depStop = td?.departure_stop?.name || "";
-    const depMs = coerceDate(td?.departure_time)?.getTime?.() ?? "";
-    parts.push(`${lineName}|${depStop}|${depMs}`);
-  }
-  return parts.join(">") || (route?.summary ?? "");
-}
-
-async function microAccessSecondsToStop({ ds, origin, stopLoc, combo, cache }) {
-  const key = `${combo}:${latLngKey(stopLoc)}`;
-  if (key && cache?.has(key)) return cache.get(key);
-
-  // Prefer bicycling geometry for both TRANSIT_BIKE and TRANSIT_SKATE (skate derives time from bike).
-  let bikeSec = Infinity;
-  try {
-    const bikeRes = await routeOnce(ds, {
-      origin,
-      destination: stopLoc,
-      travelMode: "BICYCLING",
-      provideRouteAlternatives: false,
-    });
-    const r = bikeRes?.routes?.[0];
-    const tot = r ? routeTotals(r) : { dur: Infinity };
-    bikeSec = tot.dur;
-  } catch {
-    // ignore
-  }
-
-  // If biking fails, fall back to walking.
-  let walkSec = Infinity;
-  if (!Number.isFinite(bikeSec) || bikeSec === Infinity) {
-    try {
-      const walkRes = await routeOnce(ds, {
-        origin,
-        destination: stopLoc,
-        travelMode: "WALKING",
-        provideRouteAlternatives: false,
-      });
-      const r = walkRes?.routes?.[0];
-      const tot = r ? routeTotals(r) : { dur: Infinity };
-      walkSec = tot.dur;
-    } catch {
-      // ignore
-    }
-  }
-
-  let sec = bikeSec;
-  if (!Number.isFinite(sec) || sec === Infinity) sec = walkSec;
-  if (combo === ROUTE_COMBO.TRANSIT_SKATE) sec = skateSecondsFromGoogleBikeSeconds(sec);
-
-  if (key && cache) cache.set(key, sec);
-  return sec;
-}
-
-function insertWaitsAndRecompute({ departTime, segments }) {
-  const segs = (segments ?? []).filter((s) => s && s.mode !== "WAIT");
-  const out = [];
-  let totalSec = 0;
-  let totalDist = 0;
-  let currentTime = departTime instanceof Date ? new Date(departTime) : null;
-
-  for (const seg of segs) {
-    if (seg.mode === "TRANSIT") {
-      const dep =
-        coerceDate(seg.transitDetails?.departure_time) ??
-        coerceDate(getTransitDetailsFromStep(seg.step)?.departure_time);
-
-      if (currentTime && dep && currentTime < dep) {
-        const waitSec = (dep.getTime() - currentTime.getTime()) / 1000;
-        if (waitSec > 20) {
-          out.push({
-            mode: "WAIT",
-            seconds: waitSec,
-            distanceMeters: 0,
-            atStop: seg.transitDetails?.departure_stop,
-          });
-          totalSec += waitSec;
-        }
-        currentTime = dep;
-      }
-
-      out.push(seg);
-      totalSec += seg.seconds ?? 0;
-      totalDist += seg.distanceMeters ?? 0;
-      if (currentTime)
-        currentTime = new Date(currentTime.getTime() + (seg.seconds ?? 0) * 1000);
-      continue;
-    }
-
-    out.push(seg);
-    totalSec += seg.seconds ?? 0;
-    totalDist += seg.distanceMeters ?? 0;
-    if (currentTime)
-      currentTime = new Date(currentTime.getTime() + (seg.seconds ?? 0) * 1000);
-  }
-
-  return {
-    segments: out,
-    durationSec: totalSec,
-    distanceMeters: totalDist,
-    arriveTime: currentTime,
-  };
-}
-
-function compressFirstStopWait({ option, transitTime, now }) {
-  const segs = option?.segments ?? [];
-  const firstTransit = segs.find((s) => s?.mode === "TRANSIT") ?? null;
-  const dep =
-    coerceDate(firstTransit?.transitDetails?.departure_time) ??
-    coerceDate(getTransitDetailsFromStep(firstTransit?.step)?.departure_time);
-  if (!dep) return option;
-
-  // Access time excludes waits.
-  let accessSec = 0;
-  for (const s of segs) {
-    if (!s || s.mode === "WAIT") continue;
-    if (s.mode === "TRANSIT") break;
-    accessSec += s.seconds ?? 0;
-  }
-
-  const kind = transitTime?.kind ?? "NOW";
-  const dt =
-    transitTime?.date instanceof Date &&
-    !Number.isNaN(transitTime.date.getTime())
-      ? transitTime.date
-      : null;
-  const minAllowed = kind === "DEPART_AT" && dt ? dt : now;
-  const recommended = new Date(dep.getTime() - accessSec * 1000);
-  const departTime = recommended < minAllowed ? minAllowed : recommended;
-
-  const rebuilt = insertWaitsAndRecompute({ departTime, segments: segs });
-  return {
-    ...option,
-    ...rebuilt,
-    departTime,
-    arriveTime: rebuilt.arriveTime ?? option.arriveTime,
-  };
-}
-
-function routeTotals(route) {
-  const legs = route?.legs ?? [];
-  const dist = legs.reduce((s, l) => s + (l?.distance?.value ?? 0), 0);
-  const dur = legs.reduce((s, l) => s + (l?.duration?.value ?? 0), 0);
-  return { dist, dur };
-}
-
-function isTaxingDirect(distMeters, durSec) {
-  // Heuristic: > 90 min OR > 12 miles
-  return durSec > 90 * 60 || distMeters > 12 * 1609.344;
-}
-
-function skateSecondsFromGoogleBikeSeconds(bikeSec) {
-  // Convert bike-time estimate to skate-time using assumed speeds.
-  // (Keep bike estimate itself for BIKE mode; only used for SKATE.)
-  if (!Number.isFinite(bikeSec)) return bikeSec;
-  return bikeSec * (BIKE_MPH_ASSUMED / SKATE_MPH_FLAT);
-}
-
-function skateSecondsFromWalkSeconds(walkSec) {
-  if (!Number.isFinite(walkSec)) return walkSec;
-  return walkSec * (WALK_MPH / SKATE_MPH_FLAT);
-}
-
-export function polylineStyleForMode(mode, { isAlt = false } = {}) {
-  const strokeColor = isAlt ? ALT_GRAY : GOOGLE_BLUE;
-  const strokeWeight = isAlt ? 6 : 8;
-  // Alternates should stay in the background, but still be readable.
-  const strokeOpacity = isAlt ? 0.6 : 1;
-
-  // NOTE: dotted is done via icons so we can match Google-like walking patterns.
-  if (mode === "WALK") {
-    return {
-      strokeOpacity: 0,
-      strokeColor,
-      strokeWeight,
-      icons: [
-        {
-          icon: {
-            path: window.google.maps.SymbolPath.CIRCLE,
-            scale: 2,
-            fillColor: strokeColor,
-            fillOpacity: 1,
-            strokeColor,
-            strokeOpacity: 0,
-            strokeWeight: 0,
-          },
-          offset: "0",
-          repeat: "10px",
-        },
-      ],
-    };
-  }
-
-  // BIKE + SKATE are solid (same visual treatment).
-  return { strokeColor, strokeOpacity, strokeWeight };
-}
+// Split from src/routing/hybridPlanner.js
+import { ROUTE_COMBO } from "../routeCombos";
+import { filterRoutesByFerrySchedule } from "../ferrySchedule";
+import {
+  coerceDate,
+  compressFirstStopWait,
+  firstTransitStep,
+  fmtDistanceMeters,
+  fmtDurationSec,
+  fmtTime,
+  getLegDeparture,
+  getTransitDetailsFromStep,
+  isTaxingDirect,
+  microAccessSecondsToStop,
+  routeTotals,
+  routeOnce,
+  routeSignature,
+  skateSecondsFromGoogleBikeSeconds,
+  skateSecondsFromWalkSeconds,
+  walkAccessSecondsToFirstTransit,
+} from "./utils";
 
 export async function buildHybridOptions({
   ds,
@@ -345,6 +46,7 @@ export async function buildHybridOptions({
       destination,
       travelMode: "BICYCLING",
       provideRouteAlternatives: true,
+      avoidFerries: true,
     };
     const walkReq = {
       origin,
@@ -352,15 +54,41 @@ export async function buildHybridOptions({
       travelMode: "WALKING",
       // Some regions may ignore alternatives for walking; that's fine.
       provideRouteAlternatives: true,
+      avoidFerries: true,
     };
 
-    const [bikeResult, walkResult] = await Promise.all([
-      routeOnce(ds, bikeReq),
-      routeOnce(ds, walkReq),
-    ]);
+    let bikeResult = null;
+    let walkResult = null;
+    try {
+      bikeResult = await routeOnce(ds, bikeReq);
+    } catch {
+      // If bicycling directions are unavailable here, we still try walking-based skate fallback.
+    }
+    try {
+      walkResult = await routeOnce(ds, walkReq);
+    } catch {
+      // If walking directions are unavailable here, we may still have bicycling-based skate fallback.
+    }
 
-    const bikeRoutes = bikeResult?.routes ?? [];
-    const walkRoutes = walkResult?.routes ?? [];
+    let bikeRoutes = bikeResult?.routes ?? [];
+    let walkRoutes = walkResult?.routes ?? [];
+
+    if (bikeRoutes.length) {
+      bikeRoutes = await filterRoutesByFerrySchedule({
+        ds,
+        routes: bikeRoutes,
+        transitTime,
+        now,
+      });
+    }
+    if (walkRoutes.length) {
+      walkRoutes = await filterRoutesByFerrySchedule({
+        ds,
+        routes: walkRoutes,
+        transitTime,
+        now,
+      });
+    }
 
     const opts = [];
 
@@ -472,9 +200,17 @@ export async function buildHybridOptions({
 
   // --- Transit alternatives (optionally 2-pass in DEPART_AT to surface earlier vehicles
   //     that become reachable when the access leg is BIKE/SKATE instead of WALK).
-  const transitResult1 = await routeOnce(ds, transitReq);
-  const transitRoutes1 = transitResult1?.routes ?? [];
-  let transitCandidates = transitRoutes1.map((r) => ({ route: r, result: transitResult1 }));
+  let transitResult1 = null;
+  let transitCandidates = [];
+  try {
+    transitResult1 = await routeOnce(ds, transitReq);
+    const transitRoutes1 = transitResult1?.routes ?? [];
+    transitCandidates = transitRoutes1.map((r) => ({ route: r, result: transitResult1 }));
+  } catch {
+    // Transit can be unavailable for a valid trip. Keep going so direct bike/skate options can render.
+    transitResult1 = null;
+    transitCandidates = [];
+  }
 
   if (kind === "DEPART_AT" && tDate && (combo === ROUTE_COMBO.TRANSIT_BIKE || combo === ROUTE_COMBO.TRANSIT_SKATE) && transitCandidates.length) {
     // Compute how much faster micro-mobility is vs Google's walking-to-first-stop,
@@ -543,8 +279,21 @@ export async function buildHybridOptions({
     travelMode: "BICYCLING",
     provideRouteAlternatives: true,
   };
-  const bikeResult = await routeOnce(ds, bikeReq);
-  const bikeRoutes = bikeResult?.routes ?? [];
+  let bikeResult = null;
+  try {
+    bikeResult = await routeOnce(ds, bikeReq);
+  } catch {
+    // Keep going; walk-based skate or transit-based options may still exist.
+  }
+  let bikeRoutes = bikeResult?.routes ?? [];
+  if (bikeRoutes.length) {
+    bikeRoutes = await filterRoutesByFerrySchedule({
+      ds,
+      routes: bikeRoutes,
+      transitTime,
+      now,
+    });
+  }
 
   // Direct walk (for direct skate candidate)
   const walkReq = {
@@ -553,8 +302,22 @@ export async function buildHybridOptions({
     travelMode: "WALKING",
     provideRouteAlternatives: false,
   };
-  const walkResult = await routeOnce(ds, walkReq);
-  const walkRoute = walkResult?.routes?.[0] ?? null;
+  let walkResult = null;
+  try {
+    walkResult = await routeOnce(ds, walkReq);
+  } catch {
+    // Keep going; bike/transit options may still exist.
+  }
+  let walkRoute = walkResult?.routes?.[0] ?? null;
+  if (walkRoute) {
+    const filteredWalkRoutes = await filterRoutesByFerrySchedule({
+      ds,
+      routes: [walkRoute],
+      transitTime,
+      now,
+    });
+    walkRoute = filteredWalkRoutes[0] ?? null;
+  }
 
   const options = [];
 
@@ -596,7 +359,11 @@ export async function buildHybridOptions({
     const walkSkateSec = skateSecondsFromWalkSeconds(walkTot.dur);
     const bikeSkateSec = bikeTop ? skateSecondsFromGoogleBikeSeconds(bikeTop.durationSec) : Infinity;
 
-    const useBike = bikeSkateSec <= walkSkateSec;
+    const hasBike = Number.isFinite(bikeSkateSec);
+    const hasWalk = Number.isFinite(walkSkateSec);
+    if (!hasBike && !hasWalk) return null;
+
+    const useBike = hasBike && (!hasWalk || bikeSkateSec <= walkSkateSec);
     const dist = useBike ? bikeTop?.distanceMeters ?? 0 : walkTot.dist;
     const sec = useBike ? bikeSkateSec : walkSkateSec;
     const start = kind === "ARRIVE_BY" && tDate ? new Date(tDate.getTime() - sec * 1000) : kind === "DEPART_AT" && tDate ? tDate : now;
@@ -727,6 +494,9 @@ export async function buildHybridOptions({
           distanceMeters: dist,
           transitDetails: td ?? null,
           step,
+          // Fallback geometry source if step.path is missing in some Maps payloads.
+          route: tr,
+          directionsResult: baseResult,
         });
         totalSec += dur;
         totalDist += dist;
@@ -778,8 +548,10 @@ export async function buildHybridOptions({
       if (options.length >= maxOptions) break;
     }
   } else if (addDirectSkate) {
-    const taxing = isTaxingDirect(directSkateCandidate.distanceMeters, directSkateCandidate.durationSec);
-    if (!taxing || options.length < maxOptions - 1) options.push(directSkateCandidate);
+    if (directSkateCandidate && Number.isFinite(directSkateCandidate.durationSec)) {
+      const taxing = isTaxingDirect(directSkateCandidate.distanceMeters, directSkateCandidate.durationSec);
+      if (!taxing || options.length < maxOptions - 1) options.push(directSkateCandidate);
+    }
   }
 
   // Sorting
@@ -841,63 +613,3 @@ export async function buildHybridOptions({
 // - Downhill boosts up to 10 mph
 // - Uphill slows
 // - At >= 8° uphill, clamp to walking speed
-export async function refineSkateSegmentsWithElevation({ option }) {
-  if (!option?.segments?.length) return option;
-  const hasSkate = option.segments.some((s) => s.mode === "SKATE" && s.route);
-  if (!hasSkate) return option;
-
-  const { ElevationService } = await window.google.maps.importLibrary("elevation");
-  const { computeDistanceBetween } = window.google.maps.geometry.spherical;
-
-  const es = new ElevationService();
-
-  const segs = await Promise.all(
-    option.segments.map(async (seg) => {
-      if (seg.mode !== "SKATE" || !seg.route) return seg;
-      const path = seg.route?.overview_path ?? [];
-      if (!path.length) return seg;
-
-      // Sample elevation along the path
-      const samples = Math.min(48, Math.max(12, Math.round(path.length / 2)));
-      const elev = await es.getElevationAlongPath({ path, samples });
-      const results = elev?.results ?? [];
-      if (results.length < 2) return seg;
-
-      let sec = 0;
-      for (let i = 0; i < results.length - 1; i++) {
-        const a = results[i];
-        const b = results[i + 1];
-        const dist = computeDistanceBetween(a.location, b.location) || 0;
-        const dz = (b.elevation ?? 0) - (a.elevation ?? 0);
-        const gradeRad = dist > 0 ? Math.atan2(dz, dist) : 0;
-        const gradeDeg = (gradeRad * 180) / Math.PI;
-
-        // Conservative speed model
-        let speed = SKATE_MPS_FLAT;
-        if (gradeDeg >= 0) {
-          const t = Math.min(1, gradeDeg / SKATE_UPHILL_COLLAPSE_DEG);
-          speed = SKATE_MPS_FLAT + (WALK_MPS - SKATE_MPS_FLAT) * t;
-        } else {
-          const t = Math.min(1, Math.abs(gradeDeg) / 8);
-          speed = SKATE_MPS_FLAT + (SKATE_MPS_CAP - SKATE_MPS_FLAT) * t;
-        }
-
-        sec += dist / Math.max(0.1, speed);
-      }
-
-      return { ...seg, seconds: sec };
-    })
-  );
-
-  const durationSec = segs.reduce((s, x) => s + (x.seconds ?? 0), 0);
-  const distanceMeters = segs.reduce((s, x) => s + (x.distanceMeters ?? 0), 0);
-  const departTime = option.departTime;
-  const arriveTime = departTime ? new Date(departTime.getTime() + durationSec * 1000) : option.arriveTime;
-
-  return { ...option, segments: segs, durationSec, distanceMeters, arriveTime };
-}
-
-export const HYBRID_STYLES = {
-  GOOGLE_BLUE,
-  ALT_GRAY,
-};

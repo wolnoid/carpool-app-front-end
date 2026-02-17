@@ -1,5 +1,5 @@
 // src/components/Landing/Landing.jsx
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import styles from "./Landing.module.css";
 import DirectionsSidebar from "../DirectionsSidebar/DirectionsSidebar.jsx";
 import { useGoogleMapsReady } from "../../hooks/useGoogleMapsReady";
@@ -8,10 +8,16 @@ import { useGeolocation } from "../../hooks/useGeolocation";
 import { useInnerMap } from "../../hooks/useInnerMap";
 import { usePickerPrefill } from "../../hooks/usePickerPrefill";
 import { useMapContextMenu } from "../../hooks/useMapContextMenu";
-import { useRouting } from "../../hooks/useRouting";
+import { useRouting } from "../../hooks/useRouting/useRoutingHook";
 import { ROUTE_COMBO } from "../../routing/routeCombos";
+import {
+  SEARCH_TRIGGER,
+  buildRoutingSearch,
+  historyModeForTrigger,
+  parseRoutingSearch,
+} from "../../routing/urlState";
 
-import { populatePlacePickerFromLatLng } from "../../maps/placePicker";
+import { populatePlacePickerFromLatLng, closePickerSuggestions } from "../../maps/placePicker";
 import { toLatLngLiteral } from "../../maps/directionsUtils";
 
 const FALLBACK_CENTER = { lat: 40.749933, lng: -73.98633 };
@@ -30,8 +36,8 @@ export default function Landing() {
   const canRenderMap = mapsReady && geoResolved;
 
   // State used by sidebar + to enable buttons; routing uses refs for latest values
-  const [origin, setOrigin] = useState(null);
-  const [destination, setDestination] = useState(null);
+  const [origin, setOriginState] = useState(null);
+  const [destination, setDestinationState] = useState(null);
   const [routeCombo, setRouteCombo] = useState(ROUTE_COMBO.TRANSIT);
   // Avoid-hills slider expressed in degrees. 25° roughly covers very steep city streets.
   const [hillMaxDeg, setHillMaxDeg] = useState(25);
@@ -92,11 +98,6 @@ export default function Landing() {
   const currentQueryKey = computeQueryKey();
   const directionsDirty = Boolean(destination) && currentQueryKey !== lastQueryKey;
 
-  // Default origin state to geolocation for routing (no UI fill on load)
-  useEffect(() => {
-    if (userLoc) setOrigin((prev) => prev ?? userLoc);
-  }, [userLoc]);
-
   // Refs for stable “latest value” access inside map listeners
   const originRef = useRef(origin);
   const destinationRef = useRef(destination);
@@ -104,6 +105,30 @@ export default function Landing() {
   const routeComboRef = useRef(routeCombo);
   const hillMaxDegRef = useRef(hillMaxDeg);
   const travelModeRef = useRef("TRANSIT");
+  const initialUrlStateRef = useRef(
+    typeof window !== "undefined" ? parseRoutingSearch(window.location.search) : null
+  );
+  const initialUrlAppliedRef = useRef(false);
+  const initialPickerSeededRef = useRef(false);
+  const pendingAutorunRef = useRef(null);
+  const autorunStartedRef = useRef(false);
+
+  const setOrigin = useCallback((next) => {
+    const resolved = typeof next === "function" ? next(originRef.current) : next;
+    originRef.current = resolved;
+    setOriginState(resolved);
+  }, []);
+
+  const setDestination = useCallback((next) => {
+    const resolved = typeof next === "function" ? next(destinationRef.current) : next;
+    destinationRef.current = resolved;
+    setDestinationState(resolved);
+  }, []);
+
+  // Default origin state to geolocation for routing (no UI fill on load)
+  useEffect(() => {
+    if (userLoc) setOrigin((prev) => prev ?? userLoc);
+  }, [userLoc, setOrigin]);
 
   useEffect(() => void (originRef.current = origin), [origin]);
   useEffect(() => void (destinationRef.current = destination), [destination]);
@@ -124,6 +149,46 @@ export default function Landing() {
       date: timeValue,
     };
   }, [timeKind, timeValue]);
+
+  const commitSuccessfulSearchToUrl = useCallback((triggerType, queryState) => {
+    if (typeof window === "undefined") return;
+    if (!queryState?.origin || !queryState?.destination) return;
+
+    const search = buildRoutingSearch(
+      {
+        ...queryState,
+        hillMaxDeg: Number.isFinite(Number(queryState?.hillMaxDeg))
+          ? Number(queryState.hillMaxDeg)
+          : Number(hillMaxDegRef.current),
+      },
+      { includeWhenNow: true }
+    );
+    if (!search) return;
+
+    const path = window.location.pathname || "/";
+    const hash = window.location.hash || "";
+    const currentUrl = `${path}${window.location.search || ""}${hash}`;
+    const nextUrl = `${path}${search}${hash}`;
+    if (nextUrl === currentUrl) return;
+
+    const historyMode = historyModeForTrigger(triggerType);
+    if (historyMode === "push") window.history.pushState(null, "", nextUrl);
+    else window.history.replaceState(null, "", nextUrl);
+  }, []);
+
+  const handleRoutingSearchSuccess = useCallback(
+    ({ triggerType, queryState } = {}) => {
+      if (!queryState?.origin || !queryState?.destination) return;
+      setLastQueryKey(
+        computeQueryKey({
+          originOverride: queryState.origin,
+          destinationOverride: queryState.destination,
+        })
+      );
+      commitSuccessfulSearchToUrl(triggerType, queryState);
+    },
+    [computeQueryKey, commitSuccessfulSearchToUrl]
+  );
 
   // Set initial center on the web component itself
   useEffect(() => {
@@ -174,7 +239,76 @@ export default function Landing() {
 
     markFromPicked: fromPrefill.markPicked,
     fallbackCenter: FALLBACK_CENTER,
+    onSearchSuccess: handleRoutingSearchSuccess,
   });
+
+  useEffect(() => {
+    if (initialUrlAppliedRef.current) return;
+    initialUrlAppliedRef.current = true;
+
+    const parsed = initialUrlStateRef.current;
+    if (!parsed) return;
+
+    const mode = parsed.mode ?? ROUTE_COMBO.TRANSIT;
+    routeComboRef.current = mode;
+    setRouteCombo(mode);
+
+    const normalizedWhen =
+      parsed.when?.kind === "DEPART_AT" || parsed.when?.kind === "ARRIVE_BY"
+        ? {
+            kind: parsed.when.kind,
+            date:
+              parsed.when.date instanceof Date &&
+              !Number.isNaN(parsed.when.date.getTime())
+                ? parsed.when.date
+                : new Date(),
+          }
+        : { kind: "NOW", date: null };
+
+    transitTimeRef.current = normalizedWhen;
+    setTimeKind(normalizedWhen.kind);
+    if (normalizedWhen.kind === "NOW") setTimeValue(new Date());
+    else setTimeValue(normalizedWhen.date);
+
+    if (parsed.origin) {
+      fromPrefill.markPicked();
+      setOrigin(parsed.origin);
+    }
+    if (parsed.destination) {
+      setDestination(parsed.destination);
+    }
+
+    if (parsed.hasValidEndpoints) {
+      pendingAutorunRef.current = {
+        origin: parsed.origin,
+        destination: parsed.destination,
+        via: parsed.via,
+        mode,
+        transitTime: normalizedWhen,
+      };
+    }
+  }, [fromPrefill, setDestination, setOrigin]);
+
+  useEffect(() => {
+    if (!canRenderMap) return;
+    if (initialPickerSeededRef.current) return;
+
+    const parsed = initialUrlStateRef.current;
+    if (!parsed) return;
+    initialPickerSeededRef.current = true;
+
+    if (parsed.origin) {
+      populatePlacePickerFromLatLng(originPickerRef.current, parsed.origin).finally(() => {
+        closePickerSuggestions(originPickerRef.current);
+      });
+    }
+
+    if (parsed.destination) {
+      populatePlacePickerFromLatLng(destPickerRef.current, parsed.destination).finally(() => {
+        closePickerSuggestions(destPickerRef.current);
+      });
+    }
+  }, [canRenderMap]);
 
   function prefillFromUserLocationIfNeeded() {
     const ul = userLocRef.current;
@@ -183,8 +317,87 @@ export default function Landing() {
     }
   }
 
+  const executeSearch = useCallback(
+    async ({
+      triggerType,
+      originOverride,
+      destinationOverride,
+      viaPointsOverride,
+      alternatives = true,
+      fitToRoutes = true,
+      routeComboOverride,
+      transitTimeOverride,
+      suppressSuccessNotify = false,
+    } = {}) => {
+      const o =
+        toLatLngLiteral(originOverride) ??
+        toLatLngLiteral(originRef.current) ??
+        toLatLngLiteral(origin) ??
+        toLatLngLiteral(userLocRef.current) ??
+        FALLBACK_CENTER;
+      const d =
+        toLatLngLiteral(destinationOverride) ??
+        toLatLngLiteral(destinationRef.current) ??
+        toLatLngLiteral(destination);
+      if (!d) return { success: false, reason: "missing_destination" };
+
+      return await routing.buildRoute({
+        originOverride: o,
+        destinationOverride: d,
+        viaPointsOverride,
+        alternatives,
+        fitToRoutes,
+        routeComboOverride,
+        transitTimeOverride,
+        triggerType,
+        suppressSuccessNotify,
+      });
+    },
+    [destination, origin, routing]
+  );
+
+  useEffect(() => {
+    if (!canRenderMap || !routing.isReady) return;
+    if (autorunStartedRef.current) return;
+
+    const pending = pendingAutorunRef.current;
+    if (!pending?.origin || !pending?.destination) return;
+
+    autorunStartedRef.current = true;
+    let cancelled = false;
+
+    (async () => {
+      const res = await executeSearch({
+        triggerType: SEARCH_TRIGGER.AUTORUN,
+        originOverride: pending.origin,
+        destinationOverride: pending.destination,
+        viaPointsOverride: pending.via,
+        alternatives: pending.via?.length ? false : true,
+        fitToRoutes: true,
+        routeComboOverride: pending.mode,
+        transitTimeOverride: pending.transitTime,
+      });
+
+      if (cancelled) return;
+      if (res?.reason === "not_ready") {
+        autorunStartedRef.current = false;
+        return;
+      }
+
+      pendingAutorunRef.current = null;
+    })().catch(() => {
+      if (cancelled) return;
+      autorunStartedRef.current = false;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canRenderMap, executeSearch, routing.isReady]);
+
   async function onBuildRoute() {
-    const d = destination;
+    const o = originRef.current ?? origin ?? userLocRef.current ?? FALLBACK_CENTER;
+    const d = destinationRef.current ?? destination;
     if (!d) return;
 
     // If the user is in "Leave now", refresh the displayed time at the moment they request directions.
@@ -193,9 +406,14 @@ export default function Landing() {
     prefillFromUserLocationIfNeeded();
 
     // Drain immediately; re-arms once inputs change
-    setLastQueryKey(computeQueryKey());
+    setLastQueryKey(computeQueryKey({ originOverride: o, destinationOverride: d }));
 
-    await routing.buildRoute({ destinationOverride: d, alternatives: true });
+    await executeSearch({
+      triggerType: SEARCH_TRIGGER.EXPLICIT_GET_DIRECTIONS,
+      originOverride: o,
+      destinationOverride: d,
+      alternatives: true,
+    });
   }
 
   function onClearRoute() {
@@ -209,12 +427,20 @@ export default function Landing() {
 
     prefillFromUserLocationIfNeeded();
 
+    closePickerSuggestions(originPickerRef.current);
+    closePickerSuggestions(destPickerRef.current);
+
     setDestination(here);
-    populatePlacePickerFromLatLng(destPickerRef.current, here);
+    populatePlacePickerFromLatLng(destPickerRef.current, here).finally(() => {
+      closePickerSuggestions(destPickerRef.current);
+    });
 
-    setLastQueryKey(computeQueryKey({ destinationOverride: here }));
+    const o = originRef.current ?? origin ?? userLocRef.current ?? FALLBACK_CENTER;
+    setLastQueryKey(computeQueryKey({ originOverride: o, destinationOverride: here }));
 
-    await routing.buildRoute({
+    await executeSearch({
+      triggerType: SEARCH_TRIGGER.EXPLICIT_CONTEXT_SET_TO,
+      originOverride: o,
       destinationOverride: here,
       alternatives: true,
     });
@@ -225,17 +451,24 @@ export default function Landing() {
 
     if (timeKind === "NOW") setTimeValue(new Date());
 
+    closePickerSuggestions(originPickerRef.current);
+    closePickerSuggestions(destPickerRef.current);
+
     fromPrefill.markPicked();
     setOrigin(here);
-    populatePlacePickerFromLatLng(originPickerRef.current, here);
+    populatePlacePickerFromLatLng(originPickerRef.current, here).finally(() => {
+      closePickerSuggestions(originPickerRef.current);
+    });
 
-    const d = destinationRef.current;
+    const d = destinationRef.current ?? destination;
     if (!d) return;
 
-    setLastQueryKey(computeQueryKey({ originOverride: here }));
+    setLastQueryKey(computeQueryKey({ originOverride: here, destinationOverride: d }));
 
-    await routing.buildRoute({
+    await executeSearch({
+      triggerType: SEARCH_TRIGGER.EXPLICIT_CONTEXT_SET_FROM,
       originOverride: here,
+      destinationOverride: d,
       alternatives: true,
     });
   }
@@ -261,6 +494,7 @@ export default function Landing() {
         <div className={styles.layout}>
           <DirectionsSidebar
             canRenderMap={canRenderMap}
+            origin={origin}
             userLoc={userLoc}
             setOrigin={setOrigin}
             destination={destination}
@@ -281,6 +515,7 @@ export default function Landing() {
             destPickerRef={destPickerRef}
             routeOptions={routing.routeOptions}
             isLoadingRoutes={routing.isLoading}
+            routeError={routing.routeError}
             selectedRouteIndex={routing.selectedRouteIndex}
             onSelectRoute={routing.selectRoute}
             onZoomToRoute={routing.zoomToRoute}

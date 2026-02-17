@@ -41,6 +41,35 @@ function findPickerInput(pickerEl) {
   return null;
 }
 
+export function closePickerSuggestions(pickerEl) {
+  if (!pickerEl) return;
+  const input = findPickerInput(pickerEl);
+  if (!input) return;
+
+  try {
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true })
+    );
+    input.dispatchEvent(
+      new KeyboardEvent("keyup", { key: "Escape", bubbles: true, composed: true })
+    );
+  } catch {
+    // ignore
+  }
+
+  try {
+    input.blur?.();
+  } catch {
+    // ignore
+  }
+
+  try {
+    pickerEl.blur?.();
+  } catch {
+    // ignore
+  }
+}
+
 export function getPickerText(pickerEl) {
   const input = findPickerInput(pickerEl);
   return input?.value ?? "";
@@ -95,27 +124,37 @@ export async function reverseGeocodeLL(ll) {
 
 export async function populatePlacePickerFromLatLng(pickerEl, ll) {
   if (!pickerEl) return;
+  closePickerSuggestions(pickerEl);
 
-  // show something immediately
-  forcePickerText(pickerEl, fmtLatLng(ll));
+  try {
+    // show something immediately
+    forcePickerText(pickerEl, fmtLatLng(ll));
 
-  const { address, placeId } = await reverseGeocodeLL(ll);
-  if (address) forcePickerText(pickerEl, address);
+    const { address, placeId } = await reverseGeocodeLL(ll);
+    if (address) forcePickerText(pickerEl, address);
 
-  // Best-case: set pickerEl.value to a real Place object (if supported)
-  if (placeId) {
-    try {
-      const { Place } = await window.google.maps.importLibrary("places");
-      const place = new Place({ id: placeId });
-      await place.fetchFields({ fields: ["location", "formattedAddress"] });
-
+    // Best-case: set pickerEl.value to a real Place object (if supported)
+    if (placeId) {
       try {
-        pickerEl.value = place;
-      } catch {
-        // ignore; UI already set
+        const { Place } = await window.google.maps.importLibrary("places");
+        const place = new Place({ id: placeId });
+        await place.fetchFields({ fields: ["location", "formattedAddress"] });
+
+        try {
+          pickerEl.value = place;
+        } catch {
+          // ignore; UI already set
+        }
+      } catch (e) {
+        console.warn("Place fetch/set failed:", e);
       }
-    } catch (e) {
-      console.warn("Place fetch/set failed:", e);
+    }
+  } finally {
+    closePickerSuggestions(pickerEl);
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => closePickerSuggestions(pickerEl));
+    } else {
+      setTimeout(() => closePickerSuggestions(pickerEl), 0);
     }
   }
 }

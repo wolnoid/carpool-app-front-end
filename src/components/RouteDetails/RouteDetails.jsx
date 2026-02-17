@@ -141,6 +141,12 @@ function inferPrimaryWayName(seg) {
   return best;
 }
 
+function lineAlreadyIncludesMode(line, modeWord) {
+  const l = String(line || "").trim().toLowerCase();
+  const m = String(modeWord || "").trim().toLowerCase();
+  return Boolean(l && m && l.includes(m));
+}
+
 function StepHtml({ html }) {
   if (!html) return null;
   // Google provides sanitized-ish HTML (bold/line breaks). We keep it as-is.
@@ -170,7 +176,11 @@ function SegmentHeader({ seg }) {
     const vehicleWord = String(t.vehicle || "").trim();
     const line = String(t.shortName || "").trim();
     const v = vehicleWord ? vehicleWord.toLowerCase() : "";
-    const label = line ? (v ? `${line} ${v}` : line) : (v || "Transit");
+    const label = line
+      ? lineAlreadyIncludesMode(line, v)
+        ? line
+        : (v ? `${line} ${v}` : line)
+      : (v || "Transit");
     const agency = shortTransitAgencyName(t.agency || "");
     return (
       <div className={styles.segHeader}>
